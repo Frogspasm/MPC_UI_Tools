@@ -34,7 +34,7 @@ import struct
 import sys
 import zlib
 
-KIT_VERSION = 1
+KIT_VERSION = 2
 
 # --------------------------------------------------------------------------------------------
 # Colours
@@ -61,6 +61,16 @@ THEMES = {
     "lime": "ff8fd21f",
     "violet": "ff9b63ff",
     "mono": "ffe4e4e6",
+    "acidbox": "ffd93a25",            # AcidBox desktop, Butter skin (its LED colour)
+    "acidbox-midnight": "ffff5b40",   # AcidBox desktop, Midnight skin
+}
+
+# Full palettes for themes that copy a desktop skin (AcidBox PluginEditor.h). Each sets the
+# knob colours the desktop plugin draws: the body disc, the pointer mark, the track
+# (ink at `alpha` over the background) and the value arc (the theme's accent, from THEMES).
+PALETTES = {
+    "acidbox": {"bg": "fff0cf3e", "ink": "ff1d2547", "body": "ff1d2547", "pointer": "fff0cf3e", "alpha": 0.2},
+    "acidbox-midnight": {"bg": "ff121935", "ink": "fff0cf3e", "body": "fff0cf3e", "pointer": "ff121935", "alpha": 0.22},
 }
 
 
@@ -94,6 +104,19 @@ def make_theme(name, accent=None):
     th["accent"] = acc
     th["accentDark"] = mix(acc, th["outline"], 0.35)
     th["accentGlow"] = with_alpha(acc, 70)
+    if name in PALETTES:
+        p = PALETTES[name]
+        bg, ink, body = parse_argb(p["bg"]), parse_argb(p["ink"]), parse_argb(p["body"])
+        white, black = (255, 255, 255, 255), (0, 0, 0, 255)
+        th["track"] = mix(ink, bg, 1.0 - p["alpha"])     # ink at alpha over the background
+        th["body"] = body
+        th["bodyLight"] = mix(body, white, 0.15)
+        th["bodyDark"] = mix(body, black, 0.35)
+        th["outline"] = mix(body, black, 0.6)
+        th["pointer"] = parse_argb(p["pointer"])
+        th["thumb"] = mix(body, white, 0.3)
+        th["thumbLight"] = mix(body, white, 0.45)
+        th["thumbDark"] = mix(body, black, 0.2)
     th["ledOff"] = mix(acc, th["body"], 0.78)
     return th
 
@@ -274,25 +297,107 @@ def write_png(path, width, rows):
 # Knob
 # --------------------------------------------------------------------------------------------
 SWEEP = math.radians(270.0)
+WHITE = (255, 255, 255, 255)
+BLACK = (0, 0, 0, 255)
 
 
-def knob_static(size, th):
+def curve_value(points, u):
+    """Height (0..1) of a custom slope curve at u (0..1). points: [(u, v), ...], piecewise linear, held flat past the ends."""
+    pts = sorted(points)
+    if u <= pts[0][0]:
+        return pts[0][1]
+    for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
+        if u <= x1:
+            return y0 if x1 == x0 else y0 + (y1 - y0) * (u - x0) / (x1 - x0)
+    return pts[-1][1]
+
+
+#: Which parts of a control are drawn. An element can switch any of them off (ui_library.py); the kit draws all.
+ALL_PARTS = {"body": True, "track": True, "pointer": True, "thumb": True, "outline": True}
+
+
+def _parts(parts):
+    return ALL_PARTS if parts is None else {**ALL_PARTS, **parts}
+
+
+def knob_static(size, th, parts=None, style=None):
+    """style: optional {"shadow", "highlight", "outline_w", "ridges": (count, length), "cap": (size, shade)}
+    from an element. None (the kit's look) keeps the original drawing exactly.
+    cap: a flat top of `size` x the face radius, with a sloped ring (the taper) round it. `shade` 0..1 sets how
+    strong the slope's light and dark sides are. The cap scales with the knob, as it is a fraction of the face."""
+    p = _parts(parts)
+    st = style or {}
     c = Canvas(size, size)
     cx = cy = size / 2.0
     r = size / 2.0
     ring_out, ring_in = r - 1.0, r - max(4.0, size * 0.1)
     body_r = ring_in - max(3.0, size * 0.07)
     # unfilled track over the sweep
-    arc(c, cx, cy, ring_in, ring_out, -SWEEP / 2.0, SWEEP / 2.0, th["track"])
+    if p["track"]:
+        arc(c, cx, cy, ring_in, ring_out, -SWEEP / 2.0, SWEEP / 2.0, th["track"])
     # body: shadow, rim lit from top-left, face with a soft vertical gradient
-    circle(c, cx, cy + 1.5, body_r + 1.0, with_alpha(th["outline"], 150))
-    circle(c, cx, cy, body_r, light_rim(cx, cy, th["bodyLight"], th["bodyDark"]))
     face_r = body_r - max(1.5, size * 0.035)
-    circle(c, cx, cy, face_r, vgrad(cy - face_r, cy + face_r, mix(th["body"], th["bodyLight"], 0.35), th["body"]))
+    if p["body"]:
+        sh = st.get("shadow")
+        shadow_col = th.get("shadow", th["outline"])   # the drop shadow's colour (its opacity is the kit's)
+        if sh is None:
+            if p["outline"]:
+                circle(c, cx, cy + 1.5, body_r + 1.0, with_alpha(shadow_col, 150))
+        elif sh and p["outline"]:
+            circle(c, cx, cy + sh, body_r + 1.0, with_alpha(shadow_col, 120))
+            circle(c, cx, cy + max(1.0, sh / 2.0), body_r + 0.5, with_alpha(shadow_col, 70))
+        circle(c, cx, cy, body_r, light_rim(cx, cy, th["bodyLight"], th["bodyDark"]))
+        circle(c, cx, cy, face_r, vgrad(cy - face_r, cy + face_r, mix(th["body"], th["bodyLight"], 0.35), th["body"]))
+        cap = st.get("cap")
+        sec = th.get("secondary", th["body"])     # the flat top's colour (the body's, unless the element sets one)
+        if cap:
+            cap_r = face_r * cap["size"]
+            shade = cap["shade"]
+            # the slope: lit on the top-left, darker on the far side. shade sets how far each side moves from the body.
+            lit = mix(th["body"], th["bodyLight"], 0.25 + 0.6 * shade)
+            dark = mix(th["body"], BLACK, 0.15 + 0.75 * shade)
+            if cap.get("invert"):
+                lit, dark = dark, lit
+            if cap.get("curve"):
+                # a custom gradient across the slope: u = 0 at the flat top's edge, 1 at the face's edge
+                pts = cap["curve"]
+                def slope(px, py, lit=lit, dark=dark, pts=pts):
+                    d = math.hypot(px - cx, py - cy)
+                    u = (d - cap_r) / max(0.01, face_r - cap_r)
+                    return mix(dark, lit, curve_value(pts, u))
+                ring(c, cx, cy, cap_r, face_r, slope)
+            else:
+                ring(c, cx, cy, cap_r, face_r, light_rim(cx, cy, lit, dark))
+            # the flat top, lit a little, with a fine edge so it reads as raised
+            sec_light = th["bodyLight"] if "secondary" not in th else mix(sec, WHITE, 0.15)
+            circle(c, cx, cy, cap_r, vgrad(cy - cap_r, cy + cap_r, mix(sec, sec_light, 0.35), sec))
+            if p["outline"]:
+                ring(c, cx, cy, cap_r - 0.75, cap_r, with_alpha(th["outline"], 150))
+        hl = st.get("highlight")
+        if hl:
+            # the lit band: centred on hl_angle (radians clockwise from 12 o'clock), 1.8 rad wide; the kit's is at -1.3
+            hc = st.get("hl_angle", -1.3)
+            a0, a1 = (hc - 0.9, hc + 0.9) if "hl_angle" in st else (-2.2, -0.4)
+            arc(c, cx, cy, body_r - hl, body_r - 0.5, a0, a1, th.get("highlight", with_alpha((255, 255, 255, 255), 130)))
+        ow = st.get("outline_w")
+        if ow:
+            ring(c, cx, cy, body_r - ow, body_r, th["outline"])
+        ridges = st.get("ridges")
+        if ridges:
+            n, length = ridges
+            for i in range(int(n)):
+                a = 2.0 * math.pi * i / n
+                x0, y0 = cx + math.sin(a) * (body_r - length), cy - math.cos(a) * (body_r - length)
+                x1, y1 = cx + math.sin(a) * (body_r - 0.5), cy - math.cos(a) * (body_r - 0.5)
+                capsule(c, x0, y0, x1, y1, 1.4, with_alpha(th["outline"], 190))
     return c, (cx, cy, ring_in, ring_out, body_r, face_r)
 
 
-def knob_frame(static, geo, t, th, bipolar):
+def knob_frame(static, geo, t, th, bipolar, parts=None, style=None):
+    """style: pointer_len (0.3..1, the tip's reach as a fraction of the face; 1 is the kit's) and
+    pointer_off (px along the radius; + moves the pointer out to the rim, - in towards the centre)."""
+    p = _parts(parts)
+    st = style or {}
     c = static.copy()
     cx, cy, ring_in, ring_out, body_r, face_r = geo
     a = -SWEEP / 2.0 + SWEEP * t
@@ -304,22 +409,30 @@ def knob_frame(static, geo, t, th, bipolar):
     else:
         if t > 0.002:
             arc(c, cx, cy, ring_in, ring_out, -SWEEP / 2.0, a, th["accent"])
-    # pointer
-    px0 = cx + math.sin(a) * face_r * 0.38
-    py0 = cy - math.cos(a) * face_r * 0.38
-    px1 = cx + math.sin(a) * (face_r - 2.0)
-    py1 = cy - math.cos(a) * (face_r - 2.0)
+    if not p["pointer"]:
+        return c
+    # pointer: from near the centre out to the tip. The defaults (length 1, offset 0) are the kit's pointer.
+    tip = (face_r - 2.0) * st.get("pointer_len", 1.0)
+    base = min(face_r * 0.38, tip * 0.5)
+    off = st.get("pointer_off", 0.0)
+    r0 = max(0.0, base + off)
+    r1 = max(r0, tip + off)
+    px0 = cx + math.sin(a) * r0
+    py0 = cy - math.cos(a) * r0
+    px1 = cx + math.sin(a) * r1
+    py1 = cy - math.cos(a) * r1
     w = max(2.5, face_r * 0.11)
-    capsule(c, px0, py0, px1, py1, w + 1.5, with_alpha(th["outline"], 120))
+    if p["outline"]:
+        capsule(c, px0, py0, px1, py1, w + 1.5, with_alpha(th["outline"], 120))
     capsule(c, px0, py0, px1, py1, w, th["pointer"])
     return c
 
 
-def render_knob(size, frames, th, bipolar):
-    static, geo = knob_static(size, th)
+def render_knob(size, frames, th, bipolar, parts=None, style=None):
+    static, geo = knob_static(size, th, parts, style)
     rows = []
     for i in range(frames):
-        rows.extend(knob_frame(static, geo, i / (frames - 1.0), th, bipolar).rows())
+        rows.extend(knob_frame(static, geo, i / (frames - 1.0), th, bipolar, parts, style).rows())
     return rows
 
 
@@ -334,22 +447,48 @@ def fader_geometry(length, thickness):
             "from": travel_from, "to": travel_to, "track_h": 8, "mid": thickness / 2.0}
 
 
-def fader_static(g, th):
+def fader_static(g, th, parts=None, style=None):
+    p = _parts(parts)
+    st = style or {}
     c = Canvas(g["len"], g["th"])
     x0, x1 = g["from"], g["to"]
     y = g["mid"] - g["track_h"] / 2.0
+    if not p["track"]:
+        return c
     # track in the same grey as the knob ring, with a dark inner shadow along the top
-    rrect(c, x0 - 4, y + 1, x1 - x0 + 8, g["track_h"], 4.0, with_alpha(th["outline"], 160))
+    sh = st.get("shadow")
+    if p["outline"]:
+        off = 1 if sh is None else 1 + int(sh) // 2
+        rrect(c, x0 - 4, y + off, x1 - x0 + 8, g["track_h"], 4.0, with_alpha(th["outline"], 160))
     rrect(c, x0 - 4, y, x1 - x0 + 8, g["track_h"], 4.0, vgrad(y, y + g["track_h"], th["bodyDark"], th["track"]))
     return c
 
 
-def fader_cap(g, th):
+def fader_cap(g, th, parts=None, style=None):
+    """The cap. Its picture is taller than the cap when a shadow is set; base_h is the cap's own height,
+    so the cap itself stays where it is."""
+    p = _parts(parts)
+    st = style or {}
+    sh = st.get("shadow")
+    hl = st.get("highlight")
+    ow = st.get("outline_w")
     w, h = g["cap_len"], g["cap_th"]
-    c = Canvas(w + 2, h + 4)  # room for the drop shadow
-    rrect(c, 1, 3, w, h, 5.0, with_alpha(th["outline"], 170))
+    extra = int(sh) if sh else 0
+    c = Canvas(w + 2, h + 4 + extra)   # room for the drop shadow
+    c.base_h = h + 4
+    if not p["thumb"]:
+        return c   # the cap is off: a blank picture, so the fader shows only its track
+    if p["outline"]:
+        if sh is None:
+            rrect(c, 1, 3, w, h, 5.0, with_alpha(th["outline"], 170))
+        elif sh:
+            rrect(c, 1, 3, w, h, 5.0, with_alpha(th["outline"], 170))
+            rrect(c, 1, 1 + sh, w, h, 5.0, with_alpha(th["outline"], 110))
     rrect(c, 1, 1, w, h, 5.0, vgrad(1, 1 + h, th["thumbLight"], th["thumbDark"]))
-    rrect_outline(c, 1, 1, w, h, 5.0, 1.0, with_alpha(th["outline"], 180))
+    if hl:
+        rrect(c, 4, 2, w - 8, hl, min(2.5, hl / 2.0), with_alpha((255, 255, 255, 255), 130))
+    if p["outline"]:
+        rrect_outline(c, 1, 1, w, h, 5.0, ow or 1.0, with_alpha(th["outline"], 180))
     cx = 1 + w / 2.0
     capsule(c, cx, 1 + h * 0.28, cx, 1 + h * 0.72, 2.0, th["accentDark"])
     capsule(c, cx, 1 + h * 0.28, cx, 1 + h * 0.72, 1.4, th["accent"])
@@ -370,7 +509,8 @@ def fader_frame(static, cap, g, t, th, bipolar):
     else:
         if x - g["from"] > 0.5:
             rrect(c, g["from"] - 2, y, x - g["from"] + 2, fh, 2.0, th["accent"])
-    c.blit(cap, int(round(x - cap.w / 2.0)), int(round(g["mid"] - cap.h / 2.0)))
+    base_h = getattr(cap, "base_h", cap.h)   # the cap sits by its own height, not the shadow's
+    c.blit(cap, int(round(x - cap.w / 2.0)), int(round(g["mid"] - base_h / 2.0)))
     return c
 
 
@@ -383,9 +523,9 @@ def transpose(canvas):
     return out
 
 
-def render_fader(length, thickness, frames, th, bipolar, vertical):
+def render_fader(length, thickness, frames, th, bipolar, vertical, parts=None, style=None):
     g = fader_geometry(length, thickness)
-    static, cap = fader_static(g, th), fader_cap(g, th)
+    static, cap = fader_static(g, th, parts, style), fader_cap(g, th, parts, style)
     rows = []
     for i in range(frames):
         frame = fader_frame(static, cap, g, i / (frames - 1.0), th, bipolar)
@@ -396,30 +536,83 @@ def render_fader(length, thickness, frames, th, bipolar, vertical):
 # --------------------------------------------------------------------------------------------
 # Switches and buttons (two-state PNGs for the Button widget)
 # --------------------------------------------------------------------------------------------
-def render_toggle(th, on):
+def render_toggle(th, on, parts=None, style=None):
+    p = _parts(parts)
+    st = style or {}
+    sh = st.get("shadow")
+    hl = st.get("highlight")
+    ow = st.get("outline_w")
     w, h = 64, 32
     c = Canvas(w, h)
-    rrect(c, 1, 2, w - 2, h - 3, (h - 3) / 2.0, with_alpha(th["outline"], 150))
+    if p["outline"]:
+        if sh is None:
+            rrect(c, 1, 2, w - 2, h - 3, (h - 3) / 2.0, with_alpha(th["outline"], 150))
+        elif sh:
+            rrect(c, 1, 1 + sh, w - 2, h - 3, (h - 3) / 2.0, with_alpha(th["outline"], 150))
     track = th["accent"] if on else th["track"]
-    rrect(c, 1, 1, w - 2, h - 3, (h - 3) / 2.0, vgrad(1, h - 2, mix(track, th["outline"], 0.25), track))
-    rrect_outline(c, 1, 1, w - 2, h - 3, (h - 3) / 2.0, 1.0, with_alpha(th["outline"], 200))
-    r = (h - 3) / 2.0 - 3.0
-    cx = (w - 1 - r - 4.0) if on else (1 + r + 4.0)
-    cy = 1 + (h - 3) / 2.0
-    circle(c, cx, cy + 1.0, r, with_alpha(th["outline"], 150))
-    circle(c, cx, cy, r, vgrad(cy - r, cy + r, th["thumbLight"], th["thumb"] if on else th["thumbDark"]))
+    if p["track"]:
+        rrect(c, 1, 1, w - 2, h - 3, (h - 3) / 2.0, vgrad(1, h - 2, mix(track, th["outline"], 0.25), track))
+        if hl:
+            rrect(c, 4, 2, w - 8, hl, min(hl / 2.0, (h - 3) / 2.0), with_alpha((255, 255, 255, 255), 120))
+    if p["outline"]:
+        rrect_outline(c, 1, 1, w - 2, h - 3, (h - 3) / 2.0, ow or 1.0, with_alpha(th["outline"], 200))
+    if p["thumb"]:
+        r = (h - 3) / 2.0 - 3.0
+        cx = (w - 1 - r - 4.0) if on else (1 + r + 4.0)
+        cy = 1 + (h - 3) / 2.0
+        if p["outline"]:
+            circle(c, cx, cy + (1.0 if sh is None else sh), r, with_alpha(th["outline"], 150))
+        circle(c, cx, cy, r, vgrad(cy - r, cy + r, th["thumbLight"], th["thumb"] if on else th["thumbDark"]))
     return c.rows(), w
 
 
-def render_button(th, on, w=120, h=44, led=True):
+def render_button(th, on, w=120, h=44, led=True, parts=None, radius=8.0, highlight=0, shadow=0, outline_w=None):
+    """A push button. Flat (no highlight, no shadow) it is the kit's button.
+    radius: corner roundness in px. highlight: width of the lit band along the top, in px (0 = none).
+    shadow: how far the drop shadow falls below the cap, in px (0 = none). When on, the cap sits
+    down on its shadow: the shadow is half as far."""
+    p = _parts(parts)
+    ow = 1.0 if outline_w is None else outline_w
     c = Canvas(w, h)
-    rad = 8.0
-    rrect(c, 1, 3, w - 2, h - 4, rad, with_alpha(th["outline"], 150))
-    if on and not led:
-        rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, th["accent"], th["accentDark"]))
-    else:
-        rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, th["bodyLight"], th["body"]))
-    rrect_outline(c, 1, 1, w - 2, h - 4, rad, 1.0, th["accent"] if on else with_alpha(th["outline"], 220))
+    rad = max(0.0, min(float(radius), (h - 4) / 2.0))
+    sh = max(0, min(12, int(shadow)))
+    hl = max(0, min(10, int(highlight)))
+    if sh and on:
+        sh = max(1, sh // 2)
+    if sh or hl:
+        white = (255, 255, 255, 255)
+        if sh and p["outline"]:
+            rrect(c, 1, 1 + sh, w - 2, h - 4, rad, with_alpha(th["outline"], 110))
+            rrect(c, 1, 1 + max(1, sh // 2), w - 2, h - 4, rad, with_alpha(th["outline"], 70))
+        top = mix(th["bodyLight"], white, 0.25)
+        bottom = mix(th["body"], th["bodyDark"], 0.6)
+        if p["body"]:
+            if on and not led:
+                rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, th["accent"], th["accentDark"]))
+            else:
+                rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, top, bottom))
+            if hl:
+                inset = min(rad * 0.5, (h - 4) / 4.0)
+                rrect(c, 2 + inset, 2, w - 4 - 2 * inset, hl, min(hl / 2.0, rad), with_alpha(white, 130))
+            if sh:
+                rrect(c, 3 + rad * 0.3, h - 6, w - 6 - rad * 0.6, 2, 1.0, with_alpha(th["outline"], 90))
+        if p["outline"]:
+            rrect_outline(c, 1, 1, w - 2, h - 4, rad, ow, th["accent"] if on else with_alpha(th["outline"], 220))
+        if led:
+            lx, ly, lw, lh = 11, (h - 4) / 2.0 + 1 - 9, 6, 18
+            if on:
+                rrect(c, lx - 3, ly - 3, lw + 6, lh + 6, 6.0, th["accentGlow"])
+            rrect(c, lx, ly, lw, lh, 3.0, th["accent"] if on else th["ledOff"])
+        return c.rows(), w
+    if p["outline"]:
+        rrect(c, 1, 3, w - 2, h - 4, rad, with_alpha(th["outline"], 150))
+    if p["body"]:
+        if on and not led:
+            rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, th["accent"], th["accentDark"]))
+        else:
+            rrect(c, 1, 1, w - 2, h - 4, rad, vgrad(1, h - 3, th["bodyLight"], th["body"]))
+    if p["outline"]:
+        rrect_outline(c, 1, 1, w - 2, h - 4, rad, ow, th["accent"] if on else with_alpha(th["outline"], 220))
     if led:
         lx, ly, lw, lh = 11, (h - 4) / 2.0 + 1 - 9, 6, 18
         if on:

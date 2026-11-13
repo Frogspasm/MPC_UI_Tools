@@ -1,0 +1,7 @@
+{
+  "format": 1,
+  "name": "example-knob",
+  "type": "knob",
+  "base": "cyan",
+  "size": 90
+}

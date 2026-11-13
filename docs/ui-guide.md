@@ -65,6 +65,7 @@ For full control over the look (images, custom widgets, envelopes), read `ui-ref
 | `widget` | `"knob"` (film-strip knob with name and value), `"fader"` (horizontal film-strip fader under a name / value header), `"switch"` (toggle for bool parameters, 2–4 captioned segment buttons for choice parameters), `"slider"` (default: the MPC's generic name + value bar), `"text"` (a static heading; needs `text`), `"empty"`. |
 | `polarity` | For `knob` and `fader`: `"auto"` (default), `"unipolar"` or `"bipolar"`. Bipolar strips fill from the centre. Auto picks bipolar when the parameter's default is the centre of its range and its value text reads as zero. |
 | `label` | The name shown on the MPC for a `knob`, `fader`, `switch` or `plotter` (up to 24 characters). Defaults to the parameter's name. `""` hides the name on the MPC, leaving only the value. Not used by `"slider"`, whose bar draws the parameter's own name. |
+| `element` | The name of a picture-and-style element in `ui-library/` (see the element library section below). It replaces the kit's pictures for that control: `knob`, `fader`, `switch`, `button`, or `text` (a label style). |
 | `overlay` | What double-tap / Enter opens: `"knob"` (big knob editor, default) or `"menu"` (a list; the default for `switch`, and the right choice for any long choice list). |
 | `visibleWhen` | Show this control only while another parameter has a given value: `{"param": "Wave", "choice": "Square"}` or `{"param": "Sync", "index": 1}`. Works with choice and bool parameters. |
 | `kit` | The film-strip theme for `knob` / `fader` / `switch`: `"mpc-red"` (assumed when absent), `"amber"`, `"cyan"`, `"lime"`, `"violet"`, `"mono"`, or `{ "theme": "...", "accent": "AARRGGBB" }`. See `ui-kit/README.md` and `ui-kit/preview.png`. |
@@ -117,6 +118,32 @@ Rules of thumb:
 ```json
 { "name": "BASS", "background": "grain.png", "backgroundTile": true, "backgroundScale": 25, "controls": [ ... ] }
 ```
+
+## Element library
+
+Build knobs, faders, switches, buttons and label styles once, and reuse them across plugins. Each element is a folder in `ui-library/` with an `element.json`. Design one in the browser with `tools/ui_designer.html` (choose the library folder, edit, save) or write it by hand, and check it with `python tools/ui_library.py check <name>`.
+
+Name an element in `ui.json` with `"element"`. A build draws the element's pictures itself, so the plugin needs no image files of its own:
+
+```json
+{ "param": "Cutoff", "widget": "knob", "element": "example-knob" },
+{ "param": "Comp On", "widget": "button", "element": "my-button" },
+{ "widget": "text", "text": "Filter", "element": "example-label" }
+```
+
+`button` is a push button for a bool parameter (its own widget, drawn with the LED style). A button element sets its roundness (`corner`), the width of its highlight and the width of its drop shadow.
+
+Knob, fader, switch and button elements can set depth (`shadow` and `highlight`, in px) and an `outlineWidth`; a knob can add ridges round its outer edge (`ridges`: `count` and `length`). Leaving a setting out keeps the kit's look.
+
+A knob can also set:
+- `cap`: `{"size": 0.7, "shade": 0.5, "invert": false, "curve": [[0, 0], [1, 1]]}`. A flat top `size` of the face radius (0.3 to 0.95), with a sloped ring down to the face. `shade` (0 to 1) sets how far the slope's light and dark sides move from the body (higher is darker). `invert: true` swaps the lit and dark sides. `curve` (optional, 2 to 16 points `[u, v]`) is a custom gradient across the slope: u runs from 0 at the flat top's edge to 1 at the face's edge, v from 0 (dark) to 1 (light). It scales with the knob.
+- `highlight`: the width of the lit band along the rim (0 to 10 px, 0 is none), on its own or with a shadow.
+- `highlightAngle`: where the lit band sits, in degrees clockwise from 12 o'clock (-180 to 180; the kit's is -74).
+- `colours`: for a knob, `secondary` (the flat top's colour), `highlight` and `shadow` (the drop shadow) join `body`, `track`, `pointer` and `outline`. The highlight and shadow keep their softness whatever colour you pick.
+- `valueSize` (8 to 60 px, the MPC's default is 22) and `valueColour` (ARGB) set the value shown in the centre.
+- `pointerLength`: how far the pointer tip reaches, as a fraction of the face (0.3 to 1; 1 is the kit's).
+- `pointerOffset`: move the pointer along its radius in px (-20 to 20): positive towards the rim, negative towards the centre.
+- `showValue`: `false` leaves the parameter's value off the knob's centre (the default is on, as the MPC layout has it). A knob or fader element can carry ticks (`"ticks"` in its element.json): marks round a knob, or in a row under a fader. Their picture is drawn under every control that uses the element.
 
 **Groups.** A labelled rounded outline around a set of related controls, drawn behind them. Give each as tab pixels, with an optional label of up to 40 characters that sits in the band above the outline's top edge:
 

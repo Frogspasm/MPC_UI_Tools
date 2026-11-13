@@ -385,6 +385,13 @@ public:
         parameterChanged(i, params_[(size_t)i].toPlain(norm));
     }
     void  set(int i, float plain) { if (i >= 0 && i < numParams()) setNormalised(i, params_[(size_t)i].toNormalised(plain)); }
+    // Display-only value for a meter or plotter on the touch screen. Use a parameter with
+    // automatable = false. Stores quietly: no host notification and no parameterChanged() call,
+    // so it is safe to call every block from process().
+    void  setDisplayNormalised(int i, float norm)
+    {
+        if (i >= 0 && i < numParams()) values_[(size_t)i]->store(clamp(norm, 0.0f, 1.0f), std::memory_order_relaxed);
+    }
 
     // Tell the host a parameter moved (e.g. from a MIDI CC). Not from the audio thread if avoidable.
     void notifyHostParameterChanged(int i)

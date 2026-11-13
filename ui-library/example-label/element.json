@@ -1,0 +1,11 @@
+{
+  "format": 1,
+  "name": "example-label",
+  "type": "label",
+  "base": "mpc-red",
+  "text": {
+    "height": 26,
+    "colour": "ffffffff",
+    "justification": "centre"
+  }
+}

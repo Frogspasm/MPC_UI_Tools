@@ -1252,6 +1252,7 @@ static int runTest(const std::string& path, const TestOptions& opt)
             int bad = 0, quant = 0;
             for (int i = 0; i < numParams; ++i)
             {
+                if (!p.automatable[(size_t)i]) continue;   // display-only (meter/plotter): rewritten by process(), not a setting
                 float now = getParam(e, i);
                 if (std::fabs(now - savedVals[(size_t)i]) <= 1e-4f) continue;
                 if (getStr(e, effGetParamDisplay, i) == savedText[(size_t)i]) { ++quant; continue; }

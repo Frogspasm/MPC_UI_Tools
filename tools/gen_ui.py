@@ -51,10 +51,13 @@ DEFAULT_STYLE = {
     "muted": "ff6a6a6c",
 }
 
-WIDGETS = ("slider", "knob", "fader", "switch", "empty", "text", "plotter")
+WIDGETS = ("slider", "knob", "fader", "switch", "button", "empty", "text", "plotter")
 OVERLAYS = ("knob", "menu")
 POLARITIES = ("auto", "unipolar", "bipolar")
-CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity", "min", "max", "label")
+CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity", "min", "max", "label", "element")
+# Which library element type each widget may use (ui_library.TYPES); "text" uses a "label" element.
+ELEMENT_FOR_WIDGET = {"knob": "knob", "fader": "fader", "switch": "switch", "button": "button", "text": "label"}
+LABEL_JUSTIFY = {"left": "left", "right": "right", "centre": "horizontallyCentred verticallyCentred"}
 LABEL_MAX = 24   # longest on-screen label a control may have
 PLOTTER_HISTORY_SECONDS = 4.0
 PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups")
@@ -66,7 +69,7 @@ ART_KEYS = ("image", "x", "y", "w", "h", "tile", "scale")
 MAX_TILES = 400   # per picture; each tile is one Image component on the tab
 UI_KEYS = ("pages", "style", "kit", "knobImage", "knobFrames")
 KIT_KEYS = ("theme", "accent")
-KIT_WIDGETS = ("knob", "fader", "switch")
+KIT_WIDGETS = ("knob", "fader", "switch", "button")
 MAX_SWITCH_CHOICES = 4
 BIPOLAR_ZERO_RE = re.compile(r"^[+-]?0*(\.0+)?\s*[^0-9.]*$")
 
@@ -237,6 +240,11 @@ class Control:
         self.polarity = polarity  # auto | unipolar | bipolar (knob and fader only)
         self.plot_range = plot_range  # plotter only: (min, max) of the value it draws
         self.label = label        # on-screen name, or None to show the parameter's name
+        self.element = None       # name of a ui-library element, or None for the kit
+        self.element_def = None   # its validated element.json (ui_library.load_element)
+        self.element_assets = None  # its rendered assets: key -> (file, frames, (w, h))
+        self.ticks_asset = None     # (file, w, h) of the ticks picture once it is copied into Plugin Skins/
+        self.knob_size = 77         # the knob's diameter in px, for placing ticks round it
 
     @property
     def bipolar(self):
@@ -253,6 +261,8 @@ class Control:
             return None   # drawn directly in the tab, not from a reusable definition
         if self.widget == "switch":
             return "toggle" if self.param.kind == "bool" or len(self.param.choices) == 1 else "radio%d" % len(self.param.choices)
+        if self.widget == "button":
+            return "button"
         pol = "Bi" if self.bipolar else "Uni"
         base = {"slider": "sliderWithFocus", "knob": "knob" + pol, "fader": "fader" + pol}[self.widget]
         return base + ("Menu" if self.overlay == "menu" else "")
@@ -261,9 +271,12 @@ class Control:
     def definition_key(self):
         """Component definition name. A custom label needs its own definition, because the name
         is drawn inside it. The part before '@' is the base definition (see build_tui)."""
+        key = self.definition
+        if self.element and self.widget != "text":
+            key += "#" + self.element   # a library element draws its own pictures
         if self.label is not None and self.widget != "slider":
-            return self.definition + "@" + self.label
-        return self.definition
+            key += "@" + self.label
+        return key
 
 
 class Page:
@@ -319,6 +332,13 @@ def parse_visible_when(spec, table, where):
 
 def parse_control(spec, table, where):
     control = parse_control_body(spec, table, where)
+    if isinstance(spec, dict) and "element" in spec:
+        element = spec["element"]
+        if not isinstance(element, str) or not element:
+            fail(where, '"element" must be the name of an element in ui-library/, got %s' % json.dumps(element))
+        if control.widget not in ELEMENT_FOR_WIDGET:
+            fail(where, '"element" applies to knob, fader, switch, button and text controls (this one is "%s")' % control.widget)
+        control.element = element
     if isinstance(spec, dict) and "label" in spec:
         label = spec["label"]
         if not isinstance(label, str):
@@ -343,7 +363,7 @@ def parse_control_body(spec, table, where):
     widget = spec.get("widget", "slider")
     if widget not in WIDGETS:
         fail(where, '"widget" must be one of %s, got %s' % (", ".join('"%s"' % w for w in WIDGETS), json.dumps(widget)))
-    overlay = spec.get("overlay", "menu" if widget == "switch" else "knob")
+    overlay = spec.get("overlay", "menu" if widget in ("switch", "button") else "knob")
     if overlay not in OVERLAYS:
         fail(where, '"overlay" must be "knob" or "menu", got %s' % json.dumps(overlay))
     polarity = spec.get("polarity", "auto")
@@ -377,6 +397,10 @@ def parse_control_body(spec, table, where):
             print('gen_ui: NOTE: "%s" is automatable. A plotter should show a display-only parameter (automatable = false), '
                   'so the host does not treat it as a control.' % param.name)
         return Control("plotter", param=param, visible=visible, plot_range=(float(lo), float(hi)))
+    if widget == "button":
+        if param.kind != "bool":
+            fail(where, '"button" needs a bool parameter; "%s" is kind "%s".' % (param.name, param.kind),
+                 'Use "switch" for a choice parameter, or make the parameter a boolParam() in the code.')
     if widget == "switch":
         if not param.is_discrete:
             fail(where, '"switch" needs a bool or choice parameter; "%s" is kind "%s".' % (param.name, param.kind),
@@ -773,20 +797,23 @@ def slider_component(style, overlay_name):
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
-def knob_stacked(style, knob, size, name_text=None):
-    """Knob layout: the name is centred above the knob, and the value is centred on the knob's middle.
-    The knob sits at the bottom of the slot, centred horizontally."""
+def knob_stacked(style, knob, size, name_text=None, show_value=True, value_size=22.0, value_colour=None):
+    """Knob layout: the name is centred above the knob, and the value is centred on the knob's middle
+    (unless the element sets "showValue": false). The knob sits at the bottom of the slot, centred horizontally."""
     band = SLOT_H - size                     # height left above the knob for the name
     x = (SLOT_W - size) // 2
     name_font = max(14, min(26, round(band * 0.92)))
-    return [entry("knob", "Knob", knob, "%d %d %d %d" % (x, band, size, size), "No", "Show", "Always"),
-            entry("name", "Label", name_label(style, float(name_font), "horizontallyCentred verticallyCentred", name_text),
-                  "0 0 %d %d" % (SLOT_W, band), "No", "Show", "Always"),
-            entry("value", "Label", label_data("Value", style["text"], 22.0, "horizontallyCentred verticallyCentred"),
-                  "%d %d %d 32" % (x, band + size // 2 - 16, size), "No", "Show", "Always")]
+    parts = [entry("knob", "Knob", knob, "%d %d %d %d" % (x, band, size, size), "No", "Show", "Always"),
+             entry("name", "Label", name_label(style, float(name_font), "horizontallyCentred verticallyCentred", name_text),
+                   "0 0 %d %d" % (SLOT_W, band), "No", "Show", "Always")]
+    if show_value:
+        parts.append(entry("value", "Label", label_data("Value", value_colour or style["text"], value_size, "horizontallyCentred verticallyCentred"),
+                           "%d %d %d 32" % (x, band + size // 2 - 16, size), "No", "Show", "Always"))
+    return parts
 
 
-def knob_component(style, overlay_name, knob_image, frames, bipolar=False, name_text=None):
+def knob_component(style, overlay_name, knob_image, frames, bipolar=False, name_text=None, show_value=True,
+                   value_size=22.0, value_colour=None):
     """A knob slot. knob_image: (file, frames, size) for a film strip, or None for the generic knob."""
     if knob_image:
         image, frames, size = knob_image
@@ -795,7 +822,7 @@ def knob_component(style, overlay_name, knob_image, frames, bipolar=False, name_
         size = 77
         knob = obj(("version", 5), ("knobType", "GenericLegacy"), ("polarity", "BiPolar" if bipolar else "UniPolar"),
                    ("dragOrientation", "Vertical"), ("handleName", "Data"))
-    children = [focus_child(style)] + knob_stacked(style, knob, size, name_text)
+    children = [focus_child(style)] + knob_stacked(style, knob, size, name_text, show_value, value_size, value_colour)
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
@@ -808,22 +835,36 @@ def fader_component(style, overlay_name, image, frames, name_text=None):
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
-def toggle_component(style, overlay_name, name_text=None):
+def toggle_component(style, overlay_name, name_text=None, on_file="toggle_on.png", off_file="toggle_off.png"):
     """A bool switch: name and value text on the left, a pill toggle (Button widget) on the right."""
     children = [focus_child(style),
                 entry("name", "Label", name_label(style, 26.0, "left", name_text), "15 12 170 36", "No", "Show", "Always"),
                 entry("value", "Label", label_data("Value", style["text"], 30.0), "15 52 170 42", "No", "Show", "Always"),
-                entry("toggle", "Button", button_data("toggle_on.png", "toggle_off.png", 1, 1), "186 20 84 68", "No", "Show", "Always")]
+                entry("toggle", "Button", button_data(on_file, off_file, 1, 1), "186 20 84 68", "No", "Show", "Always")]
     return component_definition(control_actions(overlay_name, double_click=False), children, "00000000")
 
 
-def radio_component(style, overlay_name, n, name_text=None):
+def button_component(style, overlay_name, on_image, off_image, w, h, name_text=None):
+    """A push button (a bool parameter): name and value text on the left, the button picture on the right,
+    centred vertically. The picture is drawn at its own size, so w and h are its pixel size."""
+    bx, by = SLOT_W - 8 - w, (SLOT_H - h) // 2
+    lw = max(60, bx - 15 - 8)   # the text stops just before the button
+    children = [focus_child(style),
+                entry("name", "Label", name_label(style, 26.0, "left", name_text), "15 12 %d 36" % lw, "No", "Show", "Always"),
+                entry("value", "Label", label_data("Value", style["text"], 30.0), "15 52 %d 42" % lw, "No", "Show", "Always"),
+                entry("button", "Button", button_data(on_image, off_image, 1, 1), "%d %d %d %d" % (bx, by, w, h), "No", "Show", "Always")]
+    return component_definition(control_actions(overlay_name, double_click=False), children, "00000000")
+
+
+def radio_component(style, overlay_name, n, name_text=None, files=None):
+    """files: (on, off) picture names for each segment size n: {n: (on, off)}; the kit's names by default."""
     """An n-way choice switch: name on top, n segment buttons below (their captions are added by the tab)."""
     width, xs = SEGMENTS[n]
     children = [focus_child(style),
                 entry("name", "Label", name_label(style, 24.0, "left", name_text), "15 8 248 34", "No", "Show", "Always")]
     for i, x in enumerate(xs):
-        children.append(entry("seg %d" % i, "Button", button_data("seg%d_on.png" % n, "seg%d_off.png" % n, i, n),
+        on_file, off_file = files if files else ("seg%d_on.png" % n, "seg%d_off.png" % n)
+        children.append(entry("seg %d" % i, "Button", button_data(on_file, off_file, i, n),
                               "%d 54 %d 40" % (x, width), "No", "Show", "Always"))
     return component_definition(control_actions(overlay_name, double_click=False), children, "00000000")
 
@@ -876,6 +917,19 @@ def tab_component(page, style):
         if g["label"]:
             children.append(entry("group %d label" % gi, "Label", label_data("Text", style["accent"], 20.0, "left", g["label"]),
                                   "%d %d %d 26" % (g["x"] + 18, g["y"] + 6, g["w"] - 36), "No", "Show", "Always"))
+    # Ticks sit under their control: a ring centred on the knob, or a row of marks under a fader's track.
+    for i, ctl in enumerate(page.controls):
+        if not ctl.ticks_asset:
+            continue
+        row, col = divmod(i, 4)
+        fname, w, h = ctl.ticks_asset
+        if ctl.widget == "knob":
+            cx = SLOT_X[col] + SLOT_W / 2.0
+            cy = SLOT_Y[row] + SLOT_H - ctl.knob_size / 2.0   # the knob sits at the slot's bottom, centred
+            x, y = int(round(cx - w / 2.0)), int(round(cy - h / 2.0))
+        else:
+            x, y = SLOT_X[col] + 15, SLOT_Y[row] + 92         # under the fader strip (its bounds are 15, 54 in the slot)
+        children.append(image_entry("ticks %d" % i, fname, x, y, w, h))
     for i, ctl in enumerate(page.controls):
         row, col = divmod(i, 4)
         bounds = "%d %d %d %d" % (SLOT_X[col], SLOT_Y[row], SLOT_W, SLOT_H)
@@ -886,7 +940,11 @@ def tab_component(page, style):
         if ctl.widget == "empty":
             continue
         if ctl.widget == "text":
-            children.append(entry("text %d" % i, "Label", label_data("Text", style["text"], 30.0, "left", ctl.text),
+            ts = ctl.element_def["text"] if ctl.element_def else None   # a label element sets the text style
+            colour = ts["colour"] if ts else style["text"]
+            height = float(ts["height"]) if ts else 30.0
+            just = LABEL_JUSTIFY[ts["justification"]] if ts else "left"
+            children.append(entry("text %d" % i, "Label", label_data("Text", colour, height, just, ctl.text),
                                   bounds, "No", "Show", "Always", invalidating=invalidating))
             continue
         if ctl.widget == "plotter":
@@ -914,25 +972,40 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
     """kit_assets: dict asset name -> (file, frames, (w, h)) for the kit files available, or {} without a kit."""
     used = []
     label_of = {}   # definition key -> the custom label it draws (only for keys with one)
+    element_of = {}  # definition key -> the library element whose pictures it draws
     for page in pages:
         for ctl in page.controls:
+            if ctl.param is None or ctl.widget == "plotter":
+                continue
             key = ctl.definition_key
-            if ctl.param is not None and ctl.widget != "plotter" and key not in used:
+            if key not in used:
                 used.append(key)
                 if ctl.label is not None and ctl.widget != "slider":
                     label_of[key] = ctl.label
+                if ctl.element:
+                    element_of[key] = ctl
     if "sliderWithFocus" not in used:
         used.insert(0, "sliderWithFocus")  # always present, so hand edits have a template to copy
 
-    def kit(name):
-        if name not in kit_assets:
-            fail(None, "the UI kit has no asset %s (tools/make_ui_kit.py --list shows them)" % name)
-        return kit_assets[name]
+    def source(elem):
+        """Picture lookup for a component: the library element's assets, or the kit's."""
+        table = elem.element_assets if elem is not None else kit_assets
+        where = ("library element %s" % elem.element) if elem is not None else "the UI kit"
+
+        def get(name):
+            if name not in table:
+                fail(None, "%s has no picture %s%s" % (where, name,
+                     "" if elem is not None else " (tools/make_ui_kit.py --list shows the kit's pictures)"))
+            return table[name]
+        return get
 
     defs = []
     for name in used:
-        # The part before '@' is the base definition; a custom label after it changes only the name text.
-        full = name.split("@")[0]
+        # "base#element@label": the base definition, the library element (optional) and the custom name (optional).
+        head = name.split("@")[0]
+        full, _, _ = head.partition("#")
+        elem = element_of.get(name)
+        get = source(elem)
         text = label_of.get(name)
         menu = full.endswith("Menu")
         overlay = "menu overlay" if menu else ("knob overlay bipolar" if "Bi" in full else "knob overlay")
@@ -940,23 +1013,34 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
         if base == "sliderWithFocus":
             comp = slider_component(style, overlay)
         elif base in ("knobUni", "knobBi"):
-            if knob_image:
-                comp = knob_component(style, overlay, (knob_image, frames, 77), frames, bipolar=(base == "knobBi"), name_text=text)
+            bi = base == "knobBi"
+            if elem is not None:
+                f, n, size = get("knob_uni" if not bi else "knob_bi")
+                ed = elem.element_def or {}
+                comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=bi, name_text=text,
+                                      show_value=ed.get("showValue", True),
+                                      value_size=float(ed.get("valueSize", 22)),
+                                      value_colour=ed.get("valueColour"))
+            elif knob_image:
+                comp = knob_component(style, overlay, (knob_image, frames, 77), frames, bipolar=bi, name_text=text)
             elif kit_assets:
-                f, n, size = kit("knob_uni" if base == "knobUni" else "knob_bi")
-                comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=(base == "knobBi"), name_text=text)
+                f, n, size = get("knob_uni" if not bi else "knob_bi")
+                comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=bi, name_text=text)
             else:
-                comp = knob_component(style, overlay, None, frames, bipolar=(base == "knobBi"), name_text=text)
+                comp = knob_component(style, overlay, None, frames, bipolar=bi, name_text=text)
         elif base in ("faderUni", "faderBi"):
-            f, n, _ = kit("fader_h_uni" if base == "faderUni" else "fader_h_bi")
+            f, n, _ = get("fader_h_uni" if base == "faderUni" else "fader_h_bi")
             comp = fader_component(style, overlay, f, n, name_text=text)
         elif base == "toggle":
-            kit("toggle_on"), kit("toggle_off")
-            comp = toggle_component(style, overlay, name_text=text)
+            on, off = get("toggle_on"), get("toggle_off")
+            comp = toggle_component(style, overlay, name_text=text, on_file=on[0], off_file=off[0])
+        elif base == "button":
+            on, off = get("button_on"), get("button_off")
+            comp = button_component(style, overlay, on[0], off[0], on[2][0], on[2][1], name_text=text)
         elif base.startswith("radio"):
             n = int(base[5:])
-            kit("seg%d_on" % n), kit("seg%d_off" % n)
-            comp = radio_component(style, overlay, n, name_text=text)
+            on, off = get("seg%d_on" % n), get("seg%d_off" % n)
+            comp = radio_component(style, overlay, n, name_text=text, files=(on[0], off[0]))
         else:
             fail(None, "internal error: no builder for component %s" % name)
         defs.append((name, comp))
@@ -1048,7 +1132,50 @@ def referenced_images(value, acc):
     return acc
 
 
-def generate(params_path, ui_path, out_dir, assets_dir=None, quiet=False, kit_cache=None):
+def resolve_elements(pages, library, cache_root, out_dir):
+    """Finds, renders (when needed) and loads every library element the layout uses. Its pictures are copied
+    into out_dir as "<element>__<file>.png", so two elements never share a file name."""
+    import shutil
+    import ui_library
+    loaded = {}
+    for pg in pages:
+        for ctl in pg.controls:
+            if not ctl.element:
+                continue
+            if ctl.element not in loaded:
+                try:
+                    folder = ui_library.find_element(ctl.element, library)
+                    el = ui_library.load_element(folder)
+                except ui_library.ElementError as e:
+                    fail(None, str(e))
+                if el["type"] != ELEMENT_FOR_WIDGET[ctl.widget]:
+                    fail(None, 'element "%s" is a %s element; a "%s" control needs a %s element'
+                         % (ctl.element, el["type"], ctl.widget, ELEMENT_FOR_WIDGET[ctl.widget]))
+                assets = {}
+                if el["type"] != "label":   # a label element is only a text style, with no pictures
+                    cache_dir = os.path.join(cache_root, "ui-library-" + el["name"])
+                    manifest = ui_library.cached_manifest(el, cache_dir)
+                    for key, a in manifest["assets"].items():
+                        fname = "%s__%s" % (el["name"], a["file"])
+                        shutil.copy2(os.path.join(cache_dir, a["file"]), os.path.join(out_dir, fname))
+                        assets[key] = (fname, a["frames"], (a["width"], a["height"]))
+                loaded[ctl.element] = (el, assets)
+            ctl.element_def, ctl.element_assets = loaded[ctl.element]
+            # A knob or fader element may carry ticks: its picture is drawn under every control that uses it.
+            t = ctl.element_assets.get("ticks")
+            ctl.ticks_asset = (t[0], t[2][0], t[2][1]) if t else None
+
+
+def knob_size_for(ctl, kit, knob_image):
+    """The diameter the knob is drawn at: a library element's, the kit's, or the generic knob's."""
+    if ctl.element_def is not None and ctl.element_def.get("type") == "knob":
+        return ctl.element_def["size"]
+    if knob_image:
+        return 77
+    return 90 if kit else 77
+
+
+def generate(params_path, ui_path, out_dir, assets_dir=None, quiet=False, kit_cache=None, library=None):
     params = load_params(params_path)
     table = ParamTable(params)
     if ui_path:
@@ -1071,6 +1198,12 @@ def generate(params_path, ui_path, out_dir, assets_dir=None, quiet=False, kit_ca
 
     os.makedirs(out_dir, exist_ok=True)
     kit_dir, kit_assets = (kit_dir_for(kit, kit_cache, out_dir) if kit else (None, {}))
+    cache_root = kit_cache or os.path.join(os.path.dirname(os.path.normpath(out_dir)), "ui-library-cache")
+    resolve_elements(pages, library, cache_root, out_dir)
+    for pg in pages:
+        for ctl in pg.controls:
+            if ctl.widget == "knob":
+                ctl.knob_size = knob_size_for(ctl, kit, knob_image)
     layout_pictures(pages, assets_dir)
     for pi, pg in enumerate(pages):
         for gi, g in enumerate(pg.groups):
@@ -1119,10 +1252,11 @@ def main(argv=None):
     ap.add_argument("--out", required=True, help='output directory, normally "<plugin folder>/Plugin Skins"')
     ap.add_argument("--assets-dir", help="folder holding knobImage (only used to warn when the file is missing)")
     ap.add_argument("--kit-cache", help="directory to cache the rendered UI kit between builds (e.g. the project's build/)")
+    ap.add_argument("--library", help="folder of UI elements that ui.json may name (default: ui-library/ at the repo root)")
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
     try:
-        generate(args.params, args.ui, args.out, args.assets_dir, args.quiet, args.kit_cache)
+        generate(args.params, args.ui, args.out, args.assets_dir, args.quiet, args.kit_cache, args.library)
     except UiError as e:
         print("gen_ui: " + str(e), file=sys.stderr)
         return 1

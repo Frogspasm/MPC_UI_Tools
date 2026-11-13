@@ -1,0 +1,907 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>UI Element Designer</title>
+<!-- Titillium Web is the MPC's UI font; the label preview uses it when it can load. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap">
+<style>
+:root{--bg:#121113;--panel:#1e1d1e;--line:#333236;--text:#eee;--muted:#8a8890;--accent:#d31145;--ok:#3fb27f;--warn:#e0a030;--err:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+header h1{font-size:15px;margin:0 10px 0 0}
+button,select,input{font:inherit;color:inherit;background:#2a292c;border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:default;border-color:var(--line)}
+button.primary{background:var(--accent);border-color:var(--accent)}
+main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;padding:12px;align-items:start}
+@media (max-width:1000px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:2px 0 8px}
+.row{display:flex;gap:6px;align-items:center;margin:5px 0;flex-wrap:wrap}
+.row>label{width:92px;color:var(--muted);flex:none}
+.row input[type=text],.row input[type=number],.row select{flex:1;min-width:0}
+.row input[type=range]{flex:1;min-width:120px}
+.row input[type=color]{flex:none;width:44px;padding:2px}
+.note{color:var(--muted);font-size:12px;margin:6px 0}
+.errs{color:var(--err);font-size:12px}
+.ok{color:var(--ok);font-size:12px}
+.item{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#242327;cursor:pointer;display:flex;justify-content:space-between;gap:6px;margin-bottom:4px}
+.item.cur{outline:1px solid var(--accent)}
+.item small{color:var(--muted)}
+.stage{background:#17161a;border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:12px;min-height:380px}
+.stage canvas{image-rendering:pixelated;background:#1e1d1e;border-radius:6px;max-width:100%}
+#status{color:var(--muted);font-size:12px;margin-left:auto;max-width:520px;text-align:right}
+.hide{display:none!important}
+/* foldable sections: the heading is the first child, and a click folds the rest of the box */
+.fold>h2{cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.fold>h2::after{content:"\25BE";color:var(--muted);font-size:14px}
+.fold.folded>h2::after{content:"\25B8"}
+.fold.folded>:not(h2){display:none!important}
+.fold>h2:hover{color:var(--text)}
+</style>
+</head>
+<body>
+<header>
+  <h1>UI Element Designer</h1>
+  <button id="bFolder">Library folder…</button>
+  <button id="bNew">New element</button>
+  <button id="bSave" class="primary">Save element</button>
+  <button id="bDownload">Download element.json</button>
+  <span id="folderName" class="note" style="margin:0"></span>
+  <span id="status"></span>
+</header>
+<main>
+  <div class="panel">
+    <h2>Library</h2>
+    <div id="list"><div class="note">Choose the ui-library/ folder to see its elements. Until then, a new element is kept in this page only.</div></div>
+    <div class="note">Use an element in ui.json with <code>"element": "name"</code>.</div>
+  </div>
+
+  <div>
+    <div class="stage">
+      <canvas id="cv"></canvas>
+      <div class="row" style="justify-content:center" id="previewRow">
+        <label id="valLabel" class="note" style="width:auto">Value</label>
+        <input id="val" type="range" min="0" max="1" step="0.01" value="0.5" style="width:200px">
+        <label class="note" style="width:auto">Preview <select id="pol" style="width:auto"><option value="uni">unipolar</option><option value="bi">bipolar</option></select></label>
+        <label class="note" style="width:auto"><input type="checkbox" id="zoom2" checked style="width:auto"> 2x</label>
+      </div>
+      <div class="note" style="text-align:center;max-width:620px">
+        The preview draws the element with the renderer's shapes and colours. Run
+        <code>python tools/ui_library.py render &lt;name&gt;</code> to draw the exact PNGs the build uses.
+      </div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Checks</h2>
+      <div id="checks"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div>
+    <h2>Element</h2>
+    <div class="row"><label>Name</label><input id="name" type="text" maxlength="48" placeholder="my-knob"></div>
+    <div class="row"><label>Type</label>
+      <select id="type">
+        <option value="knob">knob</option><option value="fader">fader</option><option value="switch">switch</option>
+        <option value="button">button</option><option value="label">label</option>
+      </select>
+    </div>
+    <div class="row" data-for="knob fader switch button label"><label>Base theme</label><select id="base"></select></div>
+    <div class="row" data-for="knob fader switch button"><label>Accent</label>
+      <input id="accentPick" type="color" title="The value arc and LED colour">
+      <label class="note" style="width:auto"><input type="checkbox" id="accentOn" style="width:auto"> Set</label>
+    </div>
+
+    </div>
+    <div data-for="knob fader switch button">
+      <h2 style="margin-top:12px">Parts</h2>
+      <div id="colours"></div>
+    </div>
+
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Size</h2>
+      <div class="row"><label>Diameter</label><input id="size" type="number" min="40" max="160" step="1"><span class="note">px</span></div>
+    </div>
+
+    <div data-for="knob fader">
+      <h2 style="margin-top:12px">Ticks</h2>
+      <div class="row"><label>Draw ticks</label><input id="tOn" type="checkbox" style="width:auto">
+        <span class="note" id="tWhere"></span></div>
+      <div id="tickFields">
+        <div class="row" id="radiusRow"><label>Radius</label><input id="tRadius" type="number" min="20" max="140" step="1"><span class="note">px from the knob's centre</span></div>
+        <div class="row"><label>Count</label><input id="tCount" type="number" min="2" max="33" step="1"></div>
+        <div class="row"><label>Length</label><input id="tLength" type="number" min="2" max="60" step="1"><span class="note">px</span></div>
+        <div class="row"><label>Thickness</label><input id="tStroke" type="number" min="1" max="6" step="1"><span class="note">px</span></div>
+        <div class="row"><label>Colour</label><input id="tColour" type="color"></div>
+      </div>
+      <div class="note">Ticks are drawn under the control in a layout. A knob's ticks sweep 270 degrees with the gap at the bottom; a fader's sit in a row under its track.</div>
+    </div>
+
+    <div data-for="knob fader switch">
+      <h2 style="margin-top:12px">Depth</h2>
+      <div class="row"><label>Custom depth</label><input id="dOn" type="checkbox" style="width:auto"><span class="note">off keeps the kit's look</span></div>
+      <div id="depthFields">
+        <div class="row"><label>Shadow</label><input id="dShadow" type="range" min="0" max="12" step="1"><span class="note" id="dShadowVal"></span></div>
+        <div class="row" id="dHlRow"><label>Highlight</label><input id="dHl" type="range" min="0" max="10" step="1"><span class="note" id="dHlVal"></span></div>
+      </div>
+    </div>
+
+    <div data-for="knob fader switch button">
+      <h2 style="margin-top:12px">Outline</h2>
+      <div class="row"><label>Custom width</label><input id="owOn" type="checkbox" style="width:auto"><span class="note">off keeps the kit's line</span></div>
+      <div class="row" id="owRow"><label>Width</label><input id="owW" type="range" min="0.5" max="4" step="0.5"><span class="note" id="owVal"></span></div>
+    </div>
+
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Ridges</h2>
+      <div class="row"><label>Ridges</label><input id="rOn" type="checkbox" style="width:auto"><span class="note">notches round the outer edge</span></div>
+      <div id="ridgeFields">
+        <div class="row"><label>Count</label><input id="rCount" type="number" min="2" max="96" step="1"></div>
+        <div class="row"><label>Length</label><input id="rLength" type="number" min="1" max="8" step="1"><span class="note">px</span></div>
+      </div>
+    </div>
+
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Knob shape</h2>
+      <div class="row"><label>Highlight</label><input id="kHl" type="range" min="0" max="10" step="1"><span class="note" id="kHlVal"></span></div>
+      <div class="row"><label>Highlight angle</label><input id="hlAng" type="range" min="-180" max="180" step="1"><span class="note" id="hlAngVal"></span></div>
+      <div class="row"><label>Taper cap</label><input id="capOn" type="checkbox" style="width:auto"><span class="note">a flat top, sloped down to the face</span></div>
+      <div id="capFields">
+        <div class="row"><label>Cap size</label><input id="capSize" type="range" min="0.3" max="0.95" step="0.05"><span class="note" id="capSizeVal"></span></div>
+        <div class="row"><label>Slope shade</label><input id="capShade" type="range" min="0" max="1" step="0.05"><span class="note" id="capShadeVal"></span></div>
+        <div class="row"><label>Invert</label><input id="capInv" type="checkbox" style="width:auto"><span class="note">swap the lit and dark sides</span></div>
+        <div class="row"><label>Custom curve</label><input id="curveOn" type="checkbox" style="width:auto"><span class="note">your own gradient across the slope</span></div>
+        <div id="curveFields">
+          <canvas id="curve" width="240" height="120" style="width:240px;height:120px;background:var(--bg,#111);border:1px solid var(--line,#333);touch-action:none;cursor:crosshair"></canvas>
+          <div class="note">Across the slope: left is the flat top's edge, right is the face's edge. Up is light, down is dark. Click to add a point, drag to move, double-click a point to remove it (two stay).</div>
+        </div>
+      </div>
+    </div>
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Colours</h2>
+      <div class="row"><label>Cap top</label><input id="secOn" type="checkbox" style="width:auto"><input id="secPick" type="color" style="margin-left:auto"></div>
+      <div class="row"><label>Highlight</label><input id="hiOn" type="checkbox" style="width:auto"><input id="hiPick" type="color" style="margin-left:auto"></div>
+      <div class="row"><label>Shadow</label><input id="shOn" type="checkbox" style="width:auto"><input id="shPick" type="color" style="margin-left:auto"></div>
+      <div class="note">Tick a colour to set it; the body colour (Parts above) is the knob's cap. The slope follows the body, and the highlight and shadow keep their softness.</div>
+    </div>
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Pointer</h2>
+      <div class="row"><label>Length</label><input id="pLen" type="range" min="0.3" max="1" step="0.05"><span class="note" id="pLenVal"></span></div>
+      <div class="row"><label>Offset</label><input id="pOff" type="range" min="-20" max="20" step="1"><span class="note" id="pOffVal"></span></div>
+      <div class="note">Highlight: the lit band along the rim's top-left (0 is none). Cap size: the flat top as a fraction of the face, so it scales with the knob. Slope shade: how strong the light and dark sides of the taper are. Pointer length: how far the tip reaches (1 is full). Offset: move the pointer out towards the rim (+) or in towards the centre (-).</div>
+    </div>
+    <div data-for="knob">
+      <h2 style="margin-top:12px">Value</h2>
+      <div class="row"><label>In centre</label><input id="valOn" type="checkbox" style="width:auto"><span class="note">show the parameter's value on the knob</span></div>
+      <div class="row"><label>Size</label><input id="valSizeOn" type="checkbox" style="width:auto"><input id="valSize" type="number" min="8" max="60" step="1"><span class="note">px (off uses the MPC's 22)</span></div>
+      <div class="row"><label>Colour</label><input id="valColOn" type="checkbox" style="width:auto"><input id="valCol" type="color" style="margin-left:auto"><span class="note">off uses the base text colour</span></div>
+    </div>
+
+    <div data-for="button">
+      <h2 style="margin-top:12px">Button</h2>
+      <div class="row"><label>Width</label><input id="bw" type="number" min="40" max="240" step="1"><span class="note">px</span></div>
+      <div class="row"><label>Height</label><input id="bh" type="number" min="20" max="120" step="1"><span class="note">px</span></div>
+      <div class="row"><label>LED</label><input id="led" type="checkbox" style="width:auto"></div>
+    </div>
+    <div data-for="button">
+      <h2 style="margin-top:12px">Shape</h2>
+      <div class="row"><label>Roundness</label><input id="corner" type="range" min="0" max="30" step="1"><span class="note" id="cornerVal"></span></div>
+      <div class="row"><label>Highlight</label><input id="hl" type="range" min="0" max="10" step="1"><span class="note" id="hlVal"></span></div>
+      <div class="row"><label>Shadow</label><input id="sh" type="range" min="0" max="12" step="1"><span class="note" id="shVal"></span></div>
+      <div class="note">Roundness: the corner radius. Highlight: the width of the lit band along the top edge (0 is none). Shadow: how far the drop shadow falls below the cap (0 is none). When on, the cap presses down onto a shorter shadow.</div>
+    </div>
+
+    <div data-for="label">
+      <h2 style="margin-top:12px">Text style</h2>
+      <div class="row"><label>Height</label><input id="tH" type="number" min="8" max="60" step="1"><span class="note">px</span></div>
+      <div class="row"><label>Colour</label><input id="tTextColour" type="color"></div>
+      <div class="row"><label>Align</label>
+        <select id="tJust"><option value="left">left</option><option value="centre">centre</option><option value="right">right</option></select>
+      </div>
+    </div>
+    <div data-for="fader switch" class="note">A fader and a switch keep the kit's size; only colours, parts and ticks change.</div>
+  </div>
+</main>
+
+<script>
+// Kit accent colours (tools/make_ui_kit.py THEMES) and the kit's default colours (GREYS), for the preview.
+const THEME_ACCENT = { "mpc-red": "ffd31145", "amber": "ffffa21a", "cyan": "ff19c6e0", "lime": "ff8fd21f", "violet": "ff9b63ff", "mono": "ffe4e4e6", "acidbox": "ffd93a25", "acidbox-midnight": "ffff5b40" };
+const GREY = { body: "ff2a2a2d", track: "ff434347", pointer: "fff2f2f2", thumb: "ffb9b9bd", outline: "ff0e0e0f" };
+const PART_NAMES = { body: "Body", track: "Track", pointer: "Pointer", thumb: "Fader cap", outline: "Outline" };
+// The parts each element type draws (the renderer's names; element.json "parts").
+const PARTS_FOR = { knob: ["body", "track", "pointer", "outline"], fader: ["track", "thumb", "outline"],
+                    switch: ["track", "thumb", "outline"], button: ["body", "outline"], label: [] };
+const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/;
+const $ = id => document.getElementById(id);
+const FONT_EM = 1.521;   // Titillium Web: ascent + descent per em (as the layout editor)
+
+let el = starter("knob");       // the element being edited
+let libDir = null;              // FileSystemDirectoryHandle of ui-library/, or null
+let loadedName = "";            // name of the element on disk that the form came from
+let value = 0.5;
+
+function starter(type) {
+  const e = { format: 1, name: "my-" + type, type, base: "mpc-red", colours: {} };
+  if (type === "knob") e.size = 90;
+  if (type === "button") Object.assign(e, { width: 120, height: 44, led: true, corner: 8, highlight: 2, shadow: 4 });
+  if (type === "label") e.text = { height: 26, colour: "ffffffff", justification: "left" };
+  if (type === "switch" || type === "fader" || type === "knob" || type === "button") e.colours = {};
+  return e;
+}
+function status(msg, isErr) { const s = $("status"); s.textContent = msg; s.style.color = isErr ? "var(--err)" : "var(--muted)"; }
+
+// ---------- colours: ARGB strings <-> arrays and CSS ----------
+const argb = v => { const n = parseInt(v, 16); return [(n >> 16) & 255, (n >> 8) & 255, n & 255, (n >>> 24) & 255]; };
+const cssA = a => `rgba(${a[0]},${a[1]},${a[2]},${(a[3] / 255).toFixed(3)})`;
+const css = v => cssA(argb(v));
+const mixA = (a, b, t) => a.map((x, i) => Math.round(x + (b[i] - x) * t));
+const WHITE = [255, 255, 255, 255], BLACK = [0, 0, 0, 255];
+const hexRgb = v => "#" + v.slice(2, 8);                  // "ffrrggbb" -> "#rrggbb" for colour inputs
+const rgbArgb = v => "ff" + v.slice(1).toLowerCase();     // "#rrggbb" -> "ffrrggbb"
+
+// The colours the preview draws with: the element's own, else the base theme's.
+function theme() {
+  const acc = el.accent || (el.colours && el.colours.accent) || THEME_ACCENT[el.base] || THEME_ACCENT["mpc-red"];
+  const c = el.colours || {};
+  const pick = k => c[k] || GREY[k];
+  return { accent: acc, body: pick("body"), track: pick("track"), pointer: pick("pointer"), thumb: pick("thumb"), outline: pick("outline"),
+           secondary: c.secondary, highlight: c.highlight, shadow: c.shadow };   // knob-only colours, unset unless the element sets them
+}
+
+// ---------- validation (the same rules as tools/ui_library.py) ----------
+function problems() {
+  const out = [];
+  if (!NAME_RE.test(el.name || "")) out.push('Name: start with a letter or digit; use letters, digits, "-" and "_" (up to 48).');
+  if (el.type === "knob" && !(el.size >= 40 && el.size <= 160)) out.push("Diameter must be 40 to 160.");
+  if (el.type === "button") {
+    if (!(el.width >= 40 && el.width <= 240)) out.push("Button width must be 40 to 240.");
+    if (!(el.height >= 20 && el.height <= 120)) out.push("Button height must be 20 to 120.");
+  }
+  if (el.type === "label" && !(el.text.height >= 8 && el.text.height <= 60)) out.push("Text height must be 8 to 60.");
+  if (el.ticks) {
+    if (!(el.ticks.count >= 2 && el.ticks.count <= 33)) out.push("Tick count must be 2 to 33.");
+    if (!(el.ticks.length >= 2 && el.ticks.length <= 60)) out.push("Tick length must be 2 to 60 px.");
+    if (!(el.ticks.stroke >= 1 && el.ticks.stroke <= 6)) out.push("Tick thickness must be 1 to 6 px.");
+    if (el.type === "knob" && !(el.ticks.radius >= 20 && el.ticks.radius <= 140)) out.push("Tick radius must be 20 to 140 px.");
+  }
+  return out;
+}
+
+// The element as element.json holds it: only the fields its type uses.
+function toFile() {
+  const o = { format: 1, name: el.name, type: el.type, base: el.base };
+  if (el.accent) o.accent = el.accent;
+  if (el.colours && Object.keys(el.colours).length) o.colours = { ...el.colours };
+  const parts = hiddenParts();
+  if (Object.keys(parts).length) o.parts = parts;
+  if (el.type === "knob") o.size = el.size;
+  if (el.type === "button") { o.width = el.width; o.height = el.height; o.led = el.led; o.corner = el.corner; o.highlight = el.highlight; o.shadow = el.shadow; }
+  if (el.type === "label") o.text = { ...el.text };
+  if (el.type === "knob" || el.type === "fader" || el.type === "switch") {
+    if (el.depth) { o.shadow = el.depth.shadow; if (el.type !== "knob") o.highlight = el.depth.highlight; }
+  }
+  if (el.type === "knob") {
+    if (el.kHl) o.highlight = el.kHl;
+    if (el.cap) o.cap = { ...el.cap };
+    if (el.pointerLength !== undefined) o.pointerLength = el.pointerLength;
+    if (el.pointerOffset !== undefined) o.pointerOffset = el.pointerOffset;
+    if (el.showValue === false) o.showValue = false;
+    if (el.valueSize !== undefined) o.valueSize = el.valueSize;
+    if (el.valueColour) o.valueColour = el.valueColour;
+    if (el.kHl && el.highlightAngle !== undefined) o.highlightAngle = el.highlightAngle;
+  }
+  if (el.type !== "label" && el.outlineWidth !== undefined) o.outlineWidth = el.outlineWidth;
+  if (el.type === "knob" && el.ridges) o.ridges = { ...el.ridges };
+  if ((el.type === "knob" || el.type === "fader") && el.ticks) {
+    const t = { count: el.ticks.count, length: el.ticks.length, stroke: el.ticks.stroke, colour: el.ticks.colour };
+    if (el.type === "knob") t.radius = el.ticks.radius;
+    o.ticks = t;
+  }
+  return o;
+}
+// Parts that are switched off for the current element.
+function hiddenParts() {
+  return Object.fromEntries((PARTS_FOR[el.type] || []).filter(k => el.parts && el.parts[k] === false).map(k => [k, false]));
+}
+// Which parts the preview draws now.
+function partsNow() {
+  return Object.fromEntries(["body", "track", "pointer", "thumb", "outline"].map(k => [k, !(el.parts && el.parts[k] === false)]));
+}
+
+// ---------- the form ----------
+function fillForm() {
+  $("name").value = el.name;
+  $("type").value = el.type;
+  $("base").innerHTML = Object.keys(THEME_ACCENT).map(t => `<option value="${t}">${t}</option>`).join("");
+  $("base").value = el.base || "mpc-red";
+  const accOn = !!el.accent;
+  $("accentOn").checked = accOn;
+  $("accentPick").value = hexRgb(el.accent || THEME_ACCENT[el.base] || THEME_ACCENT["mpc-red"]);
+  $("accentPick").disabled = !accOn;
+  // Per part: Show (draw it) and a colour of its own (instead of the base theme's).
+  $("colours").innerHTML = (PARTS_FOR[el.type] || []).map(k => {
+    const shown = !(el.parts && el.parts[k] === false);
+    const on = !!(el.colours && el.colours[k]);
+    const v = on ? el.colours[k] : GREY[k];
+    return `<div class="row"><input type="checkbox" data-show="${k}" title="Draw this part" ${shown ? "checked" : ""} style="width:auto">` +
+           `<label style="width:auto;color:var(--text);min-width:84px">${PART_NAMES[k]}</label>` +
+           `<input type="checkbox" data-ck="${k}" title="Use my own colour" ${on ? "checked" : ""} style="width:auto">` +
+           `<input type="color" data-cv="${k}" value="${hexRgb(v)}" ${on ? "" : "disabled"} style="margin-left:auto"></div>`;
+  }).join("") + '<div class="note">Show: draw the part. The tick box beside the colour: use your own colour instead of the base theme\'s.</div>';
+  $("size").value = el.size || 90;
+  $("bw").value = el.width || 120;
+  $("bh").value = el.height || 44;
+  $("led").checked = el.led !== false;
+  $("corner").value = el.corner ?? 8;  $("cornerVal").textContent = el.corner ?? 8;
+  $("hl").value = el.highlight ?? 0;   $("hlVal").textContent = el.highlight ?? 0;
+  $("sh").value = el.shadow ?? 0;      $("shVal").textContent = el.shadow ?? 0;
+  const t = el.text || { height: 26, colour: "ffffffff", justification: "left" };
+  $("tH").value = t.height;
+  $("tTextColour").value = hexRgb(t.colour);
+  $("tJust").value = t.justification;
+  const tk = el.ticks || { count: 11, length: 6, stroke: 2, colour: "ff8a8a8e", radius: 52 };
+  $("tOn").checked = !!el.ticks;
+  $("tRadius").value = tk.radius || 52;
+  $("tCount").value = tk.count;
+  $("tLength").value = tk.length;
+  $("tStroke").value = tk.stroke;
+  $("tColour").value = hexRgb(tk.colour);
+  for (const node of document.querySelectorAll("[data-for]")) {
+    node.classList.toggle("hide", !node.dataset.for.split(" ").includes(el.type));
+  }
+  $("tickFields").classList.toggle("hide", !el.ticks);
+  $("radiusRow").classList.toggle("hide", el.type !== "knob");
+  $("dOn").checked = !!el.depth;
+  $("dShadow").value = el.depth ? el.depth.shadow : 4;   $("dShadowVal").textContent = el.depth ? el.depth.shadow : 4;
+  $("dHl").value = el.depth ? el.depth.highlight : 2;    $("dHlVal").textContent = el.depth ? el.depth.highlight : 2;
+  $("depthFields").classList.toggle("hide", !el.depth);
+  $("owOn").checked = el.outlineWidth !== undefined;
+  $("owW").value = el.outlineWidth ?? 1.5;   $("owVal").textContent = el.outlineWidth ?? 1.5;
+  $("owRow").classList.toggle("hide", el.outlineWidth === undefined);
+  $("rOn").checked = !!el.ridges;
+  $("rCount").value = el.ridges ? el.ridges.count : 24;
+  $("rLength").value = el.ridges ? el.ridges.length : 3;
+  $("ridgeFields").classList.toggle("hide", !el.ridges);
+  $("kHl").value = el.kHl ?? 0;   $("kHlVal").textContent = el.kHl ?? 0;
+  const cap = el.cap || { size: 0.7, shade: 0.5 };
+  $("capOn").checked = !!el.cap;
+  $("capSize").value = cap.size;   $("capSizeVal").textContent = cap.size;
+  $("capShade").value = cap.shade; $("capShadeVal").textContent = cap.shade;
+  $("capFields").classList.toggle("hide", !el.cap);
+  $("pLen").value = el.pointerLength ?? 1;   $("pLenVal").textContent = el.pointerLength ?? 1;
+  $("pOff").value = el.pointerOffset ?? 0;   $("pOffVal").textContent = el.pointerOffset ?? 0;
+  $("valOn").checked = el.showValue !== false;
+  $("hlAng").value = el.highlightAngle ?? -74;   $("hlAngVal").textContent = el.highlightAngle ?? -74;
+  $("capInv").checked = !!(el.cap && el.cap.invert);
+  $("curveOn").checked = !!(el.cap && el.cap.curve);
+  if (el.cap && el.cap.curve) curvePts = el.cap.curve.map(p => [...p]);   // else keep the points: they come back when the curve is ticked
+  $("curveFields").classList.toggle("hide", !(el.cap && el.cap.curve));
+  drawCurve();
+  const extra = { secondary: ["secOn", "secPick"], highlight: ["hiOn", "hiPick"], shadow: ["shOn", "shPick"] };
+  for (const k of Object.keys(extra)) {
+    const on = !!(el.colours && el.colours[k]);
+    $(extra[k][0]).checked = on;
+    $(extra[k][1]).value = hexRgb(on ? el.colours[k] : THEME_ACCENT["mpc-red"]);
+    $(extra[k][1]).disabled = !on;
+  }
+  $("valSizeOn").checked = el.valueSize !== undefined;
+  $("valSize").value = el.valueSize ?? 22;
+  $("valSize").disabled = el.valueSize === undefined;
+  $("valColOn").checked = !!el.valueColour;
+  $("valCol").value = hexRgb(el.valueColour || el.text?.colour || "ffffffff");
+  $("valCol").disabled = !el.valueColour;
+  $("dHlRow").classList.toggle("hide", el.type === "knob");   // a knob has its own highlight width
+  $("tWhere").textContent = el.type === "knob" ? "around the knob" : el.type === "fader" ? "under the track" : "";
+  const noValue = el.type === "label";
+  $("valLabel").textContent = noValue ? "" : "Value";
+  $("val").classList.toggle("hide", noValue);
+}
+
+function readForm() {
+  el.name = $("name").value.trim();
+  el.type = $("type").value;
+  el.base = $("base").value || "mpc-red";
+  el.accent = $("accentOn").checked ? rgbArgb($("accentPick").value) : undefined;
+  if (el.accent === undefined) delete el.accent;
+  // Only the parts this element type draws are read from the form.
+  el.colours = {};
+  el.parts = {};
+  for (const k of PARTS_FOR[el.type] || []) {
+    const ck = document.querySelector(`[data-ck="${k}"]`), show = document.querySelector(`[data-show="${k}"]`);
+    if (ck && ck.checked) el.colours[k] = rgbArgb(document.querySelector(`[data-cv="${k}"]`).value);
+    if (show && !show.checked) el.parts[k] = false;
+  }
+  if (!Object.keys(el.parts).length) delete el.parts;
+  el.size = Number($("size").value);
+  el.width = Number($("bw").value);
+  el.height = Number($("bh").value);
+  el.led = $("led").checked;
+  el.corner = Number($("corner").value);
+  el.highlight = Number($("hl").value);
+  el.shadow = Number($("sh").value);
+  $("cornerVal").textContent = el.corner; $("hlVal").textContent = el.highlight; $("shVal").textContent = el.shadow;
+  // Depth: custom shadow and highlight for knobs, faders and switches (buttons have their own shape sliders).
+  el.depth = ((el.type === "knob" || el.type === "fader" || el.type === "switch") && $("dOn").checked)
+    ? { shadow: Number($("dShadow").value), highlight: Number($("dHl").value) } : undefined;
+  if (el.depth === undefined) delete el.depth;
+  $("dShadowVal").textContent = $("dShadow").value; $("dHlVal").textContent = $("dHl").value;
+  el.outlineWidth = $("owOn").checked ? Number($("owW").value) : undefined;
+  if (el.outlineWidth === undefined) delete el.outlineWidth;
+  $("owVal").textContent = $("owW").value;
+  el.ridges = (el.type === "knob" && $("rOn").checked) ? { count: Number($("rCount").value), length: Number($("rLength").value) } : undefined;
+  if (el.ridges === undefined) delete el.ridges;
+  // Knob shape: highlight width, taper cap, pointer length and offset, and the value in the centre.
+  el.kHl = Number($("kHl").value);
+  $("kHlVal").textContent = el.kHl;
+  el.cap = $("capOn").checked ? { size: Number($("capSize").value), shade: Number($("capShade").value) } : undefined;
+  if (el.cap === undefined) delete el.cap;
+  $("capSizeVal").textContent = $("capSize").value; $("capShadeVal").textContent = $("capShade").value;
+  el.pointerLength = Number($("pLen").value) === 1 ? undefined : Number($("pLen").value);
+  el.pointerOffset = Number($("pOff").value) === 0 ? undefined : Number($("pOff").value);
+  if (el.pointerLength === undefined) delete el.pointerLength;
+  if (el.pointerOffset === undefined) delete el.pointerOffset;
+  $("pLenVal").textContent = $("pLen").value; $("pOffVal").textContent = $("pOff").value;
+  el.showValue = $("valOn").checked;
+  el.highlightAngle = Number($("hlAng").value);
+  $("hlAngVal").textContent = el.highlightAngle;
+  if (el.cap) {
+    if ($("capInv").checked) el.cap.invert = true; else delete el.cap.invert;
+    if ($("curveOn").checked) el.cap.curve = curvePts.map(p => [...p]); else delete el.cap.curve;
+  }
+  // Knob colours: each is set only when its tick box is on.
+  for (const [k, on, pick] of [["secondary", "secOn", "secPick"], ["highlight", "hiOn", "hiPick"], ["shadow", "shOn", "shPick"]]) {
+    if (el.type === "knob" && $(on).checked) el.colours[k] = rgbArgb($(pick).value);
+    $(pick).disabled = !$(on).checked;
+  }
+  el.valueSize = $("valSizeOn").checked ? Number($("valSize").value) : undefined;
+  if (el.valueSize === undefined) delete el.valueSize;
+  el.valueColour = $("valColOn").checked ? rgbArgb($("valCol").value) : undefined;
+  if (el.valueColour === undefined) delete el.valueColour;
+  $("valSize").disabled = !$("valSizeOn").checked; $("valCol").disabled = !$("valColOn").checked;
+  $("curveFields").classList.toggle("hide", !$("curveOn").checked);
+  $("capFields").classList.toggle("hide", !el.cap);
+  if ((el.type === "knob" || el.type === "fader") && $("tOn").checked) {
+    el.ticks = { count: Number($("tCount").value), length: Number($("tLength").value), stroke: Number($("tStroke").value), colour: rgbArgb($("tColour").value) };
+    if (el.type === "knob") el.ticks.radius = Number($("tRadius").value);
+  } else {
+    delete el.ticks;
+  }
+  el.text = { height: Number($("tH").value), colour: rgbArgb($("tTextColour").value), justification: $("tJust").value };
+}
+
+function refresh() {
+  readForm();
+  $("depthFields").classList.toggle("hide", !el.depth);
+  $("owRow").classList.toggle("hide", el.outlineWidth === undefined);
+  $("ridgeFields").classList.toggle("hide", !el.ridges);
+  $("tickFields").classList.toggle("hide", !el.ticks);
+  $("radiusRow").classList.toggle("hide", el.type !== "knob");
+  const errs = problems();
+  $("checks").innerHTML = errs.length ? errs.map(m => `<div class="errs">✕ ${m}</div>`).join("")
+    : '<div class="ok">Valid. Save it to the library, then build a plugin that names it.</div>';
+  $("bSave").disabled = errs.length > 0;
+  $("bDownload").disabled = errs.length > 0;
+  $("folderName").textContent = libDir ? "Library: " + libDir.name : "No library folder chosen";
+  draw();
+  saveState();
+}
+
+// ---------- preview ----------
+const SWEEP = Math.PI * 1.5, HALF_PI = Math.PI / 2;
+const canvasAng = a => a - HALF_PI;   // renderer angles (0 = 12 o'clock) to canvas angles (0 = 3 o'clock)
+function drawArc(ctx, cx, cy, r, w, a0, a1, colour) {
+  ctx.beginPath(); ctx.strokeStyle = colour; ctx.lineWidth = w; ctx.lineCap = "butt";
+  ctx.arc(cx, cy, r, canvasAng(a0), canvasAng(a1), a1 < a0); ctx.stroke();
+}
+function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, Math.max(0, r)) : ctx.rect(x, y, w, h); ctx.fill(); }
+function strokeRoundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x, y, w, h, Math.max(0, r)) : ctx.rect(x, y, w, h); ctx.stroke(); }
+
+// ---------- the slope curve: points [u, v]; u 0 at the flat top's edge .. 1 at the face's edge; v 0 dark .. 1 light ----------
+let curvePts = [[0, 0], [1, 1]], curveDrag = -1;
+// Same as the renderer's curve_value: piecewise linear, held flat past the ends.
+function curveAt(pts, u) {
+  const p = [...pts].sort((a, b) => a[0] - b[0]);
+  if (u <= p[0][0]) return p[0][1];
+  for (let i = 1; i < p.length; i++) {
+    if (u <= p[i][0]) { const [x0, y0] = p[i - 1], [x1, y1] = p[i]; return x1 === x0 ? y1 : y0 + (y1 - y0) * (u - x0) / (x1 - x0); }
+  }
+  return p[p.length - 1][1];
+}
+const CURVE_PAD = 8;
+function drawCurve() {
+  const cv = $("curve"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  const X = u => CURVE_PAD + u * (W - 2 * CURVE_PAD), Y = v => H - CURVE_PAD - v * (H - 2 * CURVE_PAD);
+  g.clearRect(0, 0, W, H);
+  g.strokeStyle = "#3a3a3e"; g.lineWidth = 1;
+  for (const f of [0.25, 0.5, 0.75]) {
+    g.beginPath(); g.moveTo(X(f), CURVE_PAD); g.lineTo(X(f), H - CURVE_PAD); g.moveTo(CURVE_PAD, Y(f)); g.lineTo(W - CURVE_PAD, Y(f)); g.stroke();
+  }
+  g.strokeStyle = "#e8e8ea"; g.lineWidth = 2; g.beginPath();
+  for (let i = 0; i <= 80; i++) { const u = i / 80, v = curveAt(curvePts, u); i ? g.lineTo(X(u), Y(v)) : g.moveTo(X(u), Y(v)); }
+  g.stroke();
+  for (const [u, v] of curvePts) { g.beginPath(); g.fillStyle = "#ffffff"; g.arc(X(u), Y(v), 4, 0, Math.PI * 2); g.fill(); }
+}
+function curvePoint(e) {
+  const cv = $("curve"), r = cv.getBoundingClientRect();
+  const x = (e.clientX - r.left) * cv.width / r.width, y = (e.clientY - r.top) * cv.height / r.height;
+  const clamp = z => Math.max(0, Math.min(1, z));
+  return { u: clamp((x - CURVE_PAD) / (cv.width - 2 * CURVE_PAD)), v: clamp((cv.height - CURVE_PAD - y) / (cv.height - 2 * CURVE_PAD)), x, y };
+}
+function curveHit(p) {
+  const cv = $("curve");
+  const hit = curvePts.findIndex(([u, v]) => Math.hypot(CURVE_PAD + u * (cv.width - 2 * CURVE_PAD) - p.x, cv.height - CURVE_PAD - v * (cv.height - 2 * CURVE_PAD) - p.y) < 10);
+  return hit;
+}
+$("curve").addEventListener("pointerdown", e => {
+  const p = curvePoint(e), hit = curveHit(p);
+  $("curveOn").checked = true;   // editing the curve turns it on
+  if (hit >= 0) {
+    if (e.detail === 2 && curvePts.length > 2) { curvePts.splice(hit, 1); curveDrag = -1; }
+    else curveDrag = hit;
+  } else {
+    curvePts.push([p.u, p.v]); curveDrag = curvePts.length - 1;
+  }
+  $("curve").setPointerCapture(e.pointerId);
+  drawCurve(); refresh();
+});
+$("curve").addEventListener("pointermove", e => {
+  if (curveDrag < 0) return;
+  const p = curvePoint(e);
+  curvePts[curveDrag] = [p.u, p.v];
+  drawCurve(); refresh();
+});
+$("curve").addEventListener("pointerup", () => { curveDrag = -1; });
+
+// Knob at (0,0)-(S,S). Value arc is always drawn; body, track, pointer and outline follow P.
+function drawKnob(ctx, S, t, bi, th, P, st) {
+  st = st || {};
+  const c = S / 2, rOut = c - 1, rIn = c - Math.max(4, S * 0.1);
+  const mid = (rIn + rOut) / 2, w = rOut - rIn;
+  if (P.track) drawArc(ctx, c, c, mid, w, -SWEEP / 2, SWEEP / 2, css(th.track));
+  const a = -SWEEP / 2 + SWEEP * t;
+  if (bi) { if (Math.abs(t - 0.5) > 0.002) drawArc(ctx, c, c, mid, w, Math.min(0, a), Math.max(0, a), css(th.accent)); }
+  else if (t > 0.002) drawArc(ctx, c, c, mid, w, -SWEEP / 2, a, css(th.accent));
+  const bodyR = rIn - Math.max(3, S * 0.07), faceR = bodyR - Math.max(1.5, S * 0.035);
+  const body = argb(th.body), outl = argb(th.outline);
+  const shc = th.shadow ? argb(th.shadow) : outl;   // the drop shadow's colour
+  if (P.body) {
+    if (st.shadow && P.outline) {
+      ctx.beginPath(); ctx.fillStyle = cssA(shc.slice(0, 3).concat(120)); ctx.arc(c, c + st.shadow, bodyR + 1, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.beginPath(); ctx.fillStyle = css(th.body); ctx.arc(c, c, bodyR, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.fillStyle = css(th.body); ctx.arc(c, c, faceR, 0, Math.PI * 2); ctx.fill();
+    if (st.cap) {
+      // Taper: the slope from the face to a flat top. Mirrors the renderer: shade, invert, and the custom curve.
+      const cp = st.cap, capR = faceR * cp.size, shade = cp.shade;
+      const bodyLight = mixA(body, WHITE, 0.15);
+      let lit = mixA(body, bodyLight, 0.25 + 0.6 * shade), dark = mixA(body, BLACK, 0.15 + 0.75 * shade);
+      if (cp.invert) [lit, dark] = [dark, lit];
+      if (cp.curve && cp.curve.length >= 2) {
+        const N = 28;   // the curve drawn as thin rings, dark to light
+        for (let i = 0; i < N; i++) {
+          const u0 = i / N, u1 = (i + 1) / N;
+          const r0 = capR + (faceR - capR) * u0, r1 = capR + (faceR - capR) * u1;
+          ctx.beginPath(); ctx.strokeStyle = cssA(mixA(dark, lit, curveAt(cp.curve, (u0 + u1) / 2)));
+          ctx.lineWidth = r1 - r0 + 0.6; ctx.arc(c, c, (r0 + r1) / 2, 0, Math.PI * 2); ctx.stroke();
+        }
+      } else {
+        const g = ctx.createLinearGradient(c - faceR, c - faceR, c + faceR, c + faceR);
+        g.addColorStop(0, cssA(lit)); g.addColorStop(1, cssA(dark));
+        ctx.beginPath(); ctx.strokeStyle = g; ctx.lineWidth = faceR - capR; ctx.arc(c, c, (faceR + capR) / 2, 0, Math.PI * 2); ctx.stroke();
+      }
+      const sec = th.secondary ? argb(th.secondary) : body;
+      const secLight = th.secondary ? mixA(sec, WHITE, 0.15) : bodyLight;
+      const top = ctx.createLinearGradient(0, c - capR, 0, c + capR);
+      top.addColorStop(0, cssA(mixA(sec, secLight, 0.35))); top.addColorStop(1, cssA(sec));
+      ctx.beginPath(); ctx.fillStyle = top; ctx.arc(c, c, capR, 0, Math.PI * 2); ctx.fill();
+      if (P.outline) { ctx.beginPath(); ctx.strokeStyle = cssA(outl.slice(0, 3).concat(150)); ctx.lineWidth = 0.75; ctx.arc(c, c, capR - 0.375, 0, Math.PI * 2); ctx.stroke(); }
+    }
+    if (st.highlight) {
+      // The lit band, centred on hlAngle (radians from 12 o'clock) when set; the kit's own band otherwise.
+      const set = st.hlAngle !== undefined, hc = set ? st.hlAngle : -1.3;
+      ctx.beginPath(); ctx.strokeStyle = th.highlight ? css(th.highlight) : "rgba(255,255,255,0.5)"; ctx.lineWidth = st.highlight;
+      ctx.arc(c, c, bodyR - st.highlight / 2, canvasAng(set ? hc - 0.9 : -2.2), canvasAng(set ? hc + 0.9 : -0.4)); ctx.stroke();
+    }
+    if (P.outline) {
+      ctx.beginPath(); ctx.strokeStyle = css(th.outline); ctx.lineWidth = st.outline_w || 1;
+      ctx.arc(c, c, bodyR - (st.outline_w || 1) / 2, 0, Math.PI * 2); ctx.stroke();
+    }
+    if (st.ridges) {
+      const [n, len] = [st.ridges.count, st.ridges.length];
+      ctx.strokeStyle = cssA(argb(th.outline).slice(0, 3).concat(190)); ctx.lineWidth = 1.4; ctx.lineCap = "round";
+      for (let i = 0; i < n; i++) {
+        const an = 2 * Math.PI * i / n;
+        ctx.beginPath();
+        ctx.moveTo(c + Math.sin(an) * (bodyR - len), c - Math.cos(an) * (bodyR - len));
+        ctx.lineTo(c + Math.sin(an) * (bodyR - 0.5), c - Math.cos(an) * (bodyR - 0.5)); ctx.stroke();
+      }
+    }
+  }
+  if (P.pointer) {
+    // Same geometry as the renderer: length (fraction of the face) and offset (px along the radius).
+    const tip = (faceR - 2) * (st.pLen ?? 1), base = Math.min(faceR * 0.38, tip * 0.5), off = st.pOff ?? 0;
+    const r0 = Math.max(0, base + off), r1 = Math.max(r0, tip + off);
+    const px0 = c + Math.sin(a) * r0, py0 = c - Math.cos(a) * r0;
+    const px1 = c + Math.sin(a) * r1, py1 = c - Math.cos(a) * r1;
+    ctx.beginPath(); ctx.strokeStyle = css(th.pointer); ctx.lineWidth = Math.max(2.5, faceR * 0.11); ctx.lineCap = "round";
+    ctx.moveTo(px0, py0); ctx.lineTo(px1, py1); ctx.stroke();
+  }
+  if (st.valueText) {
+    // The parameter's value, centred on the knob (a preview of the number the MPC shows there).
+    ctx.font = `${st.valueSize ?? 22}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = st.valueColour ? css(st.valueColour) : "#ffffff";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(st.valueText, c, c);
+  }
+}
+
+// Fader at (0,0)-(248,36): track, value fill, cap.
+function drawFader(ctx, t, th, bi, P, st) {
+  st = st || {};
+  const from = 11, to = 237, mid = 18;
+  if (P.track) { ctx.fillStyle = css(th.track); roundRect(ctx, from - 4, mid - 4, to - from + 8, 8, 4); }
+  const x = from + (to - from) * t;
+  const c0 = bi ? (from + to) / 2 : from - 2;   // unipolar fills from the left; bipolar from the centre
+  ctx.fillStyle = css(th.accent); roundRect(ctx, Math.min(c0, x), mid - 2, Math.abs(x - c0) + (bi ? 0 : 2), 4, 2);
+  if (P.thumb) {
+    if (st.shadow && P.outline) { ctx.fillStyle = cssA(argb(th.outline).slice(0, 3).concat(110)); roundRect(ctx, x - 11, mid - 15 + st.shadow, 22, 30, 5); }
+    ctx.fillStyle = css(th.thumb); roundRect(ctx, x - 11, mid - 15, 22, 30, 5);
+    if (st.highlight) { ctx.fillStyle = "rgba(255,255,255,0.5)"; roundRect(ctx, x - 9, mid - 13, 18, st.highlight, 1); }
+    if (P.outline) { ctx.strokeStyle = css(th.outline); ctx.lineWidth = st.outline_w || 1; strokeRoundRect(ctx, x - 11, mid - 15, 22, 30, 5); }
+    ctx.fillStyle = css(th.accent); ctx.fillRect(x - 0.7, mid - 6, 1.4, 12);
+  }
+}
+
+function drawSwitch(ctx, on, th, P, st) {
+  st = st || {};
+  const w = 64, h = 32;
+  if (P.track) {
+    ctx.fillStyle = on ? css(th.accent) : css(th.track); roundRect(ctx, 1, 1, w - 2, h - 2, (h - 2) / 2);
+    if (st.highlight) { ctx.fillStyle = "rgba(255,255,255,0.45)"; roundRect(ctx, 4, 2, w - 8, st.highlight, Math.min(st.highlight / 2, (h - 2) / 2)); }
+  }
+  if (P.outline) { ctx.strokeStyle = css(th.outline); ctx.lineWidth = st.outline_w || 1; strokeRoundRect(ctx, 1.5, 1.5, w - 3, h - 3, (h - 3) / 2); }
+  if (P.thumb) {
+    const r = (h - 4) / 2 - 1, cx = on ? w - 4 - r : 4 + r;
+    if (st.shadow && P.outline) { ctx.beginPath(); ctx.fillStyle = cssA(argb(th.outline).slice(0, 3).concat(110)); ctx.arc(cx, h / 2 + st.shadow, r, 0, Math.PI * 2); ctx.fill(); }
+    ctx.beginPath(); ctx.fillStyle = css(th.thumb); ctx.arc(cx, h / 2, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// Button, as the renderer draws it: roundness, a lit top band (highlight) and a drop shadow.
+// Flat (no highlight and no shadow) it is the kit's button.
+function drawButton(ctx, W, H, on, led, th, P, corner, hl, sh, ow) {
+  const rad = Math.max(0, Math.min(corner, (H - 4) / 2));
+  let s = sh || 0;
+  if (s && on) s = Math.max(1, Math.floor(s / 2));
+  const body = argb(th.body), light = argb(th.bodyLight), dark = argb(th.bodyDark), acc = argb(th.accent);
+  if (s || hl) {
+    if (s && P.outline) {
+      ctx.fillStyle = cssA(argb(th.outline).slice(0, 3).concat(110)); roundRect(ctx, 1, 1 + s, W - 2, H - 4, rad);
+      ctx.fillStyle = cssA(argb(th.outline).slice(0, 3).concat(70)); roundRect(ctx, 1, 1 + Math.max(1, Math.floor(s / 2)), W - 2, H - 4, rad);
+    }
+    if (P.body) {
+      if (on && !led) { ctx.fillStyle = css(th.accent); }
+      else {
+        const g = ctx.createLinearGradient(0, 1, 0, H - 3);
+        g.addColorStop(0, cssA(mixA(light, WHITE, 0.25))); g.addColorStop(1, cssA(mixA(body, dark, 0.6)));
+        ctx.fillStyle = g;
+      }
+      roundRect(ctx, 1, 1, W - 2, H - 4, rad);
+      if (hl) {
+        const inset = Math.min(rad * 0.5, (H - 4) / 4);
+        ctx.fillStyle = "rgba(255,255,255,0.5)"; roundRect(ctx, 2 + inset, 2, W - 4 - 2 * inset, hl, Math.min(hl / 2, rad));
+      }
+      if (s) { ctx.fillStyle = cssA(argb(th.outline).slice(0, 3).concat(90)); roundRect(ctx, 3 + rad * 0.3, H - 6, W - 6 - rad * 0.6, 2, 1); }
+    }
+  } else if (P.body) {
+    ctx.fillStyle = on && !led ? css(th.accent) : (() => { const g = ctx.createLinearGradient(0, 1, 0, H - 3); g.addColorStop(0, cssA(light)); g.addColorStop(1, cssA(body)); return g; })();
+    roundRect(ctx, 1, 1, W - 2, H - 4, rad);
+  }
+  if (P.outline) { ctx.strokeStyle = on ? css(th.accent) : cssA(argb(th.outline).slice(0, 3).concat(220)); ctx.lineWidth = ow || 1; strokeRoundRect(ctx, 1.5, 1.5, W - 3, H - 5, rad); }
+  if (led) { ctx.fillStyle = on ? css(th.accent) : css(th.ledOff || "ff3a2b2e"); roundRect(ctx, 9, (H - 18) / 2, 6, 18, 3); }
+}
+// Ticks as the library draws them: a 270-degree ring centred on (cx, cy), or a row under a fader's track.
+function drawTicks(ctx, tk, kind, cx, cy) {
+  const marks = [];
+  if (kind === "knob") {
+    const R = tk.radius;
+    for (let i = 0; i < tk.count; i++) {
+      const a = (-135 + 270 * i / (tk.count - 1)) * Math.PI / 180;
+      marks.push([cx + Math.sin(a) * (R - tk.length), cy - Math.cos(a) * (R - tk.length), cx + Math.sin(a) * R, cy - Math.cos(a) * R]);
+    }
+  } else {
+    for (let i = 0; i < tk.count; i++) { const x = 11 + 226 * i / (tk.count - 1); marks.push([x, cy + 0.5, x, cy + tk.length - 0.5]); }
+  }
+  ctx.strokeStyle = css(tk.colour); ctx.lineWidth = tk.stroke; ctx.lineCap = "round";
+  for (const [x0, y0, x1, y1] of marks) { ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke(); }
+}
+function drawLabel(ctx, W, H, t) {
+  ctx.font = `${t.height / FONT_EM}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = css(t.colour); ctx.textBaseline = "middle";
+  ctx.textAlign = t.justification === "right" ? "right" : t.justification === "centre" ? "center" : "left";
+  const x = t.justification === "right" ? W - 6 : t.justification === "centre" ? W / 2 : 6;
+  ctx.fillText("Filter section", x, H / 2);
+}
+
+// The size of the preview picture: a knob's ticks may reach beyond the knob, a fader's sit under it.
+function previewSize() {
+  const knobTicks = el.type === "knob" && el.ticks ? el.ticks.radius * 2 : 0;
+  const pad = el.depth ? el.depth.shadow + 2 : 2;   // room for the shadow below
+  if (el.type === "knob") { const s = Math.max(el.size, knobTicks) + 2 * pad; return { w: s, h: s }; }
+  if (el.type === "fader") return { w: 248, h: (el.ticks ? 36 + 6 + el.ticks.length : 36) + pad };
+  if (el.type === "button") return { w: el.width, h: el.height };
+  if (el.type === "label") return { w: 280, h: el.text.height + 12 };
+  return { w: 64, h: 32 };   // switch
+}
+function draw() {
+  const { w, h } = previewSize();
+  const z = $("zoom2").checked ? 2 : 1;
+  const cv = $("cv");
+  cv.width = Math.round(w * z); cv.height = Math.round(h * z);
+  cv.style.width = cv.width + "px"; cv.style.height = cv.height + "px";
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(z, 0, 0, z, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const th = theme(), t = value, P = partsNow(), bi = $("pol").value === "bi";
+  const isKnob = el.type === "knob";
+  const st = { shadow: el.depth ? el.depth.shadow : undefined,
+               highlight: isKnob ? (el.kHl || undefined) : (el.depth ? el.depth.highlight : undefined),
+               outline_w: el.outlineWidth, ridges: el.ridges ? el.ridges : undefined,
+               cap: el.cap ? el.cap : undefined,
+               hlAngle: el.highlightAngle !== undefined ? el.highlightAngle * Math.PI / 180 : undefined,
+               pLen: el.pointerLength, pOff: el.pointerOffset,
+               valueSize: el.valueSize, valueColour: el.valueColour,
+               valueText: isKnob && el.showValue !== false ? String(Math.round(t * 100)) : undefined };
+  if (el.type === "knob") {
+    const ox = (w - el.size) / 2, oy = (h - el.size) / 2;
+    if (el.ticks) drawTicks(ctx, el.ticks, "knob", w / 2, h / 2);
+    ctx.save(); ctx.translate(ox, oy); drawKnob(ctx, el.size, t, bi, th, P, st); ctx.restore();
+  } else if (el.type === "fader") {
+    ctx.save(); ctx.translate(0, 0); drawFader(ctx, t, th, bi, P, st); ctx.restore();
+    if (el.ticks) drawTicks(ctx, el.ticks, "fader", 0, 40);
+  } else if (el.type === "switch") drawSwitch(ctx, t >= 0.5, th, P, st);
+  else if (el.type === "button") drawButton(ctx, el.width, el.height, t >= 0.5, el.led, th, P, el.corner, el.highlight, el.shadow, el.outlineWidth);
+  else if (el.type === "label") drawLabel(ctx, w, h, el.text);
+}
+
+// ---------- library folder ----------
+const DB = "mpc-ui-designer", STORE = "handles";
+function idb(fn) {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB, 1); r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => { const db = r.result; const t = db.transaction(STORE, "readwrite"); const req = fn(t.objectStore(STORE)); t.oncomplete = () => { db.close(); res(req && req.result); }; t.onerror = () => rej(t.error); };
+    r.onerror = () => rej(r.error);
+  });
+}
+async function rememberFolder(dir) { try { await idb(s => s.put(dir, "library")); } catch (e) { /* storage blocked */ } }
+async function restoreFolder() {
+  if (!window.showDirectoryPicker) return;
+  try { const dir = await idb(s => s.get("library")); if (dir && (await dir.queryPermission({ mode: "readwrite" })) === "granted") { libDir = dir; await refreshList(); refresh(); } }
+  catch (e) { /* no storage */ }
+}
+async function chooseFolder() {
+  if (!window.showDirectoryPicker) { status("This browser cannot open a folder. Use Download element.json and save it into ui-library/<name>/.", true); return; }
+  try { libDir = await showDirectoryPicker({ mode: "readwrite" }); await rememberFolder(libDir); await refreshList(); status("Library: " + libDir.name); refresh(); }
+  catch (e) { if (e.name !== "AbortError") status(e.message, true); }
+}
+async function refreshList() {
+  const box = $("list");
+  if (!libDir) { box.innerHTML = '<div class="note">Choose the ui-library/ folder to see its elements.</div>'; return; }
+  const items = [];
+  for await (const entry of libDir.values()) {
+    if (entry.kind !== "directory") continue;
+    try {
+      const fh = await entry.getFileHandle("element.json");
+      const j = JSON.parse(await (await fh.getFile()).text());
+      items.push({ name: entry.name, type: j.type, base: j.base || "" });
+    } catch (e) { /* not an element folder */ }
+  }
+  items.sort((a, b) => a.name.localeCompare(b.name));
+  box.innerHTML = items.length ? items.map(it => `<div class="item${it.name === loadedName ? " cur" : ""}" data-open="${it.name}"><span>${it.name}</span><small>${it.type}${it.base ? " · " + it.base : ""}</small></div>`).join("")
+    : '<div class="note">No elements in this folder yet.</div>';
+}
+async function openElement(name) {
+  try {
+    const dir = await libDir.getDirectoryHandle(name);
+    const j = JSON.parse(await (await (await dir.getFileHandle("element.json")).getFile()).text());
+    el = { ...starter(j.type), ...j, colours: j.colours || {} };
+    // The file keeps depth and highlight as flat keys; the form works from el.depth and, for a knob, el.kHl.
+    if (j.type === "knob" || j.type === "fader" || j.type === "switch")
+      el.depth = j.shadow !== undefined ? { shadow: j.shadow, highlight: j.highlight ?? 0 } : undefined;
+    if (j.type === "knob") { el.kHl = j.highlight ?? 0; el.showValue = j.showValue !== false; }
+    curvePts = [[0, 0], [1, 1]];   // another element's curve is not this one's
+    loadedName = name; fillForm(); refresh(); refreshList();
+    status("Opened " + name);
+  } catch (e) { status("Could not open " + name + ": " + e.message, true); }
+}
+async function saveElement() {
+  readForm();
+  if (problems().length) return;
+  const text = JSON.stringify(toFile(), null, 2) + "\n";
+  if (!libDir) { download(text); return; }
+  try {
+    const dir = await libDir.getDirectoryHandle(el.name, { create: true });
+    const fh = await dir.getFileHandle("element.json", { create: true });
+    const w = await fh.createWritable(); await w.write(text); await w.close();
+    if (loadedName && loadedName !== el.name) status(`Saved as ${el.name}. The old folder ${loadedName} is still there; delete it by hand if you renamed the element.`);
+    else status("Saved " + el.name + "/element.json. Run: python tools/ui_library.py render " + el.name);
+    loadedName = el.name;
+    await refreshList();
+  } catch (e) { status("Save failed: " + e.message, true); }
+}
+function download(text) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  a.download = "element.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  status("Downloaded element.json. Save it as ui-library/" + el.name + "/element.json.");
+}
+
+// ---------- wiring ----------
+document.addEventListener("input", e => { if (e.target.id === "val") return; refresh(); });
+document.addEventListener("change", e => {
+  if (e.target.id === "type") {
+    // Switching type keeps the name, base and ticks settings, and gives the new type its own starting values.
+    const keep = { name: el.name, base: el.base || "mpc-red" };
+    el = { ...starter($("type").value), ...keep };
+    fillForm(); refresh(); return;
+  }
+  if (e.target.dataset.ck || e.target.id === "accentOn") { refresh(); fillForm(); return; }   // enables a colour picker
+  refresh();
+});
+$("val").addEventListener("input", e => { value = Number(e.target.value); draw(); });
+$("zoom2").addEventListener("change", draw);
+$("pol").addEventListener("change", draw);
+$("bFolder").addEventListener("click", chooseFolder);
+$("bSave").addEventListener("click", saveElement);
+$("bDownload").addEventListener("click", () => { readForm(); if (!problems().length) download(JSON.stringify(toFile(), null, 2) + "\n"); });
+$("bNew").addEventListener("click", () => {
+  el = starter("knob"); loadedName = ""; value = 0.5; $("val").value = 0.5; curvePts = [[0, 0], [1, 1]];
+  fillForm(); refresh(); refreshList(); status("New element. Name it, then save.");
+});
+$("list").addEventListener("click", e => { const it = e.target.closest("[data-open]"); if (it) openElement(it.dataset.open); });
+// ---------- remembered settings: the element, the curve, the test value, the preview options and the folds ----------
+const UI_KEY = "mpc-ui-designer-state";   // localStorage: this browser's copy of the designer's state
+let folds = {};                            // section key -> true when folded
+function saveState() {
+  try {
+    localStorage.setItem(UI_KEY, JSON.stringify({ el, curvePts, value, pol: $("pol").value, zoom2: $("zoom2").checked, loadedName, folds }));
+  } catch (e) { /* storage blocked or full: the designer still works, it just forgets on reload */ }
+}
+function restoreState() {
+  let s = {};
+  try { s = JSON.parse(localStorage.getItem(UI_KEY)) || {}; } catch (e) { s = {}; }
+  if (s.el && typeof s.el === "object") el = { ...starter(s.el.type || "knob"), ...s.el, colours: s.el.colours || {} };
+  if (Array.isArray(s.curvePts)) curvePts = s.curvePts;
+  if (typeof s.value === "number") { value = s.value; $("val").value = value; }
+  if (s.pol) $("pol").value = s.pol;
+  if (typeof s.zoom2 === "boolean") $("zoom2").checked = s.zoom2;
+  if (typeof s.loadedName === "string") loadedName = s.loadedName;
+  if (s.folds && typeof s.folds === "object") folds = s.folds;
+}
+// Each box whose first child is a heading folds: the heading is clicked, the rest of the box hides.
+function setupFolds() {
+  const boxes = [...document.querySelectorAll("main div, main .panel")]
+    .filter(b => b.firstElementChild && b.firstElementChild.tagName === "H2");
+  boxes.forEach((box, i) => {
+    const h = box.firstElementChild, key = i + ":" + h.textContent.trim();
+    box.classList.add("fold");
+    if (folds[key]) box.classList.add("folded");
+    h.addEventListener("click", () => {
+      box.classList.toggle("folded");
+      folds[key] = box.classList.contains("folded");
+      saveState();
+    });
+  });
+}
+
+restoreState();
+setupFolds();
+fillForm(); refresh();
+restoreFolder();
+</script>
+</body>
+</html>
