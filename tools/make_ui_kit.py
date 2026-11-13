@@ -378,7 +378,18 @@ def knob_static(size, th, parts=None, style=None):
             # the lit band: centred on hl_angle (radians clockwise from 12 o'clock), 1.8 rad wide; the kit's is at -1.3
             hc = st.get("hl_angle", -1.3)
             a0, a1 = (hc - 0.9, hc + 0.9) if "hl_angle" in st else (-2.2, -0.4)
-            arc(c, cx, cy, body_r - hl, body_r - 0.5, a0, a1, th.get("highlight", with_alpha((255, 255, 255, 255), 130)))
+            hcol = th.get("highlight", with_alpha((255, 255, 255, 255), 130))
+            fade = st.get("hl_fade", 0.0)
+            if fade <= 0:
+                arc(c, cx, cy, body_r - hl, body_r - 0.5, a0, a1, hcol)
+            else:
+                # the band in 24 slices; each slice's alpha falls off towards both ends (fade 1: the ends vanish)
+                n = 24
+                for i in range(n):
+                    s0, s1 = i / n, (i + 1) / n
+                    f = 1.0 - fade * abs(s0 + s1 - 1.0) ** 2
+                    arc(c, cx, cy, body_r - hl, body_r - 0.5, a0 + (a1 - a0) * s0, a0 + (a1 - a0) * s1,
+                        with_alpha(hcol, int(hcol[3] * f)), cap=False)
         ow = st.get("outline_w")
         if ow:
             ring(c, cx, cy, body_r - ow, body_r, th["outline"])
@@ -412,8 +423,12 @@ def knob_frame(static, geo, t, th, bipolar, parts=None, style=None):
     if not p["pointer"]:
         return c
     # pointer: from near the centre out to the tip. The defaults (length 1, offset 0) are the kit's pointer.
-    tip = (face_r - 2.0) * st.get("pointer_len", 1.0)
-    base = min(face_r * 0.38, tip * 0.5)
+    # The length is measured from the outside edge: the tip stays at the rim and the inner end moves.
+    # Length 1 is the kit's pointer (inner end at 0.38 of the face).
+    scale = st.get("pointer_len", 1.0)
+    tip = face_r - 2.0
+    inner = face_r * 0.38
+    base = tip - (tip - inner) * scale
     off = st.get("pointer_off", 0.0)
     r0 = max(0.0, base + off)
     r1 = max(r0, tip + off)

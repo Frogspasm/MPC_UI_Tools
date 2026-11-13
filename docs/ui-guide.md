@@ -139,6 +139,7 @@ A knob can also set:
 - `cap`: `{"size": 0.7, "shade": 0.5, "invert": false, "curve": [[0, 0], [1, 1]]}`. A flat top `size` of the face radius (0.3 to 0.95), with a sloped ring down to the face. `shade` (0 to 1) sets how far the slope's light and dark sides move from the body (higher is darker). `invert: true` swaps the lit and dark sides. `curve` (optional, 2 to 16 points `[u, v]`) is a custom gradient across the slope: u runs from 0 at the flat top's edge to 1 at the face's edge, v from 0 (dark) to 1 (light). It scales with the knob.
 - `highlight`: the width of the lit band along the rim (0 to 10 px, 0 is none), on its own or with a shadow.
 - `highlightAngle`: where the lit band sits, in degrees clockwise from 12 o'clock (-180 to 180; the kit's is -74).
+- `highlightFade`: fades the band's two ends (0 to 1). 0 keeps hard ends, the kit's look; 1 fades the ends to nothing.
 - `colours`: for a knob, `secondary` (the flat top's colour), `highlight` and `shadow` (the drop shadow) join `body`, `track`, `pointer` and `outline`. The highlight and shadow keep their softness whatever colour you pick.
 - `valueSize` (8 to 60 px, the MPC's default is 22) and `valueColour` (ARGB) set the value shown in the centre.
 - `pointerLength`: how far the pointer tip reaches, as a fraction of the face (0.3 to 1; 1 is the kit's).

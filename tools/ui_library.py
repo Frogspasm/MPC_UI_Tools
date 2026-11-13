@@ -173,8 +173,10 @@ def validate(el, folder_name=None):
         raise ElementError("the element file must hold one JSON object")
     allowed = {"format", "name", "type", "base", "accent", "colours", "parts", "ticks", "size",
                "width", "height", "led", "corner", "highlight", "shadow", "outlineWidth", "ridges", "text",
-               "cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle"}
-    knob_only = ("cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle")
+               "cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle",
+               "highlightFade"}
+    knob_only = ("cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle",
+                 "highlightFade")
     for k in el:
         if k not in allowed:
             raise ElementError('unknown key "%s" (allowed: %s)' % (k, ", ".join(sorted(allowed))))
@@ -238,6 +240,8 @@ def validate(el, folder_name=None):
             out["valueColour"] = _colour(el["valueColour"], '"valueColour"')
         if "highlightAngle" in el:
             out["highlightAngle"] = _number(el["highlightAngle"], '"highlightAngle"', -180.0, 180.0)
+        if "highlightFade" in el:
+            out["highlightFade"] = _number(el["highlightFade"], '"highlightFade"', 0.0, 1.0)
     elif typ == "fader":
         for k in ("size", "width", "height", "led", "text", "corner", "ridges") + knob_only:
             if k in el:
@@ -324,6 +328,8 @@ def element_style(el):
         st["pointer_off"] = el["pointerOffset"]
     if "highlightAngle" in el:
         st["hl_angle"] = math.radians(el["highlightAngle"])   # the renderer works in radians from 12 o'clock
+    if "highlightFade" in el:
+        st["hl_fade"] = el["highlightFade"]
     return st or None
 
 

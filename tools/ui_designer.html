@@ -150,6 +150,7 @@ main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;paddi
       <h2 style="margin-top:12px">Knob shape</h2>
       <div class="row"><label>Highlight</label><input id="kHl" type="range" min="0" max="10" step="1"><span class="note" id="kHlVal"></span></div>
       <div class="row"><label>Highlight angle</label><input id="hlAng" type="range" min="-180" max="180" step="1"><span class="note" id="hlAngVal"></span></div>
+      <div class="row"><label>Fade ends</label><input id="hlFade" type="range" min="0" max="1" step="0.05"><span class="note" id="hlFadeVal"></span></div>
       <div class="row"><label>Taper cap</label><input id="capOn" type="checkbox" style="width:auto"><span class="note">a flat top, sloped down to the face</span></div>
       <div id="capFields">
         <div class="row"><label>Cap size</label><input id="capSize" type="range" min="0.3" max="0.95" step="0.05"><span class="note" id="capSizeVal"></span></div>
@@ -294,6 +295,7 @@ function toFile() {
     if (el.valueSize !== undefined) o.valueSize = el.valueSize;
     if (el.valueColour) o.valueColour = el.valueColour;
     if (el.kHl && el.highlightAngle !== undefined) o.highlightAngle = el.highlightAngle;
+    if (el.kHl && el.highlightFade) o.highlightFade = el.highlightFade;
   }
   if (el.type !== "label" && el.outlineWidth !== undefined) o.outlineWidth = el.outlineWidth;
   if (el.type === "knob" && el.ridges) o.ridges = { ...el.ridges };
@@ -377,6 +379,7 @@ function fillForm() {
   $("pOff").value = el.pointerOffset ?? 0;   $("pOffVal").textContent = el.pointerOffset ?? 0;
   $("valOn").checked = el.showValue !== false;
   $("hlAng").value = el.highlightAngle ?? -74;   $("hlAngVal").textContent = el.highlightAngle ?? -74;
+  $("hlFade").value = el.highlightFade ?? 0;     $("hlFadeVal").textContent = el.highlightFade ?? 0;
   $("capInv").checked = !!(el.cap && el.cap.invert);
   $("curveOn").checked = !!(el.cap && el.cap.curve);
   if (el.cap && el.cap.curve) curvePts = el.cap.curve.map(p => [...p]);   // else keep the points: they come back when the curve is ticked
@@ -449,6 +452,8 @@ function readForm() {
   el.showValue = $("valOn").checked;
   el.highlightAngle = Number($("hlAng").value);
   $("hlAngVal").textContent = el.highlightAngle;
+  el.highlightFade = Number($("hlFade").value);
+  $("hlFadeVal").textContent = el.highlightFade;
   if (el.cap) {
     if ($("capInv").checked) el.cap.invert = true; else delete el.cap.invert;
     if ($("curveOn").checked) el.cap.curve = curvePts.map(p => [...p]); else delete el.cap.curve;
@@ -541,12 +546,11 @@ $("curve").addEventListener("pointerdown", e => {
   const p = curvePoint(e), hit = curveHit(p);
   $("curveOn").checked = true;   // editing the curve turns it on
   if (hit >= 0) {
-    if (e.detail === 2 && curvePts.length > 2) { curvePts.splice(hit, 1); curveDrag = -1; }
-    else curveDrag = hit;
+    curveDrag = hit;   // a double-click removes it (see dblclick below)
   } else {
     curvePts.push([p.u, p.v]); curveDrag = curvePts.length - 1;
   }
-  $("curve").setPointerCapture(e.pointerId);
+  try { $("curve").setPointerCapture(e.pointerId); } catch (err) { /* no live pointer (e.g. a scripted event): dragging still works */ }
   drawCurve(); refresh();
 });
 $("curve").addEventListener("pointermove", e => {
@@ -556,6 +560,13 @@ $("curve").addEventListener("pointermove", e => {
   drawCurve(); refresh();
 });
 $("curve").addEventListener("pointerup", () => { curveDrag = -1; });
+// Double-click a point to remove it (two points always stay).
+$("curve").addEventListener("dblclick", e => {
+  const hit = curveHit(curvePoint(e));
+  if (hit < 0 || curvePts.length <= 2) return;
+  curvePts.splice(hit, 1); curveDrag = -1;
+  drawCurve(); refresh();
+});
 
 // Knob at (0,0)-(S,S). Value arc is always drawn; body, track, pointer and outline follow P.
 function drawKnob(ctx, S, t, bi, th, P, st) {
@@ -604,8 +615,19 @@ function drawKnob(ctx, S, t, bi, th, P, st) {
     if (st.highlight) {
       // The lit band, centred on hlAngle (radians from 12 o'clock) when set; the kit's own band otherwise.
       const set = st.hlAngle !== undefined, hc = set ? st.hlAngle : -1.3;
-      ctx.beginPath(); ctx.strokeStyle = th.highlight ? css(th.highlight) : "rgba(255,255,255,0.5)"; ctx.lineWidth = st.highlight;
-      ctx.arc(c, c, bodyR - st.highlight / 2, canvasAng(set ? hc - 0.9 : -2.2), canvasAng(set ? hc + 0.9 : -0.4)); ctx.stroke();
+      const a0 = canvasAng(set ? hc - 0.9 : -2.2), a1 = canvasAng(set ? hc + 0.9 : -0.4);
+      if (!st.hlFade) {
+        ctx.beginPath(); ctx.strokeStyle = th.highlight ? css(th.highlight) : "rgba(255,255,255,0.5)"; ctx.lineWidth = st.highlight;
+        ctx.arc(c, c, bodyR - st.highlight / 2, a0, a1); ctx.stroke();
+      } else {
+        // Faded ends: 24 slices, each one's alpha falling off towards both ends (as the renderer does).
+        const hcol = th.highlight ? argb(th.highlight) : [255, 255, 255, 128], N = 24;
+        for (let i = 0; i < N; i++) {
+          const s0 = i / N, s1 = (i + 1) / N, f = 1 - st.hlFade * Math.abs(s0 + s1 - 1) ** 2;
+          ctx.beginPath(); ctx.strokeStyle = cssA(hcol.slice(0, 3).concat(Math.round(hcol[3] * f))); ctx.lineWidth = st.highlight;
+          ctx.arc(c, c, bodyR - st.highlight / 2, a0 + (a1 - a0) * s0, a0 + (a1 - a0) * s1); ctx.stroke();
+        }
+      }
     }
     if (P.outline) {
       ctx.beginPath(); ctx.strokeStyle = css(th.outline); ctx.lineWidth = st.outline_w || 1;
@@ -624,7 +646,8 @@ function drawKnob(ctx, S, t, bi, th, P, st) {
   }
   if (P.pointer) {
     // Same geometry as the renderer: length (fraction of the face) and offset (px along the radius).
-    const tip = (faceR - 2) * (st.pLen ?? 1), base = Math.min(faceR * 0.38, tip * 0.5), off = st.pOff ?? 0;
+    // Length is measured from the outside edge: the tip stays at the rim, the inner end moves (as the renderer does).
+    const scale = st.pLen ?? 1, tip = faceR - 2, base = tip - (tip - faceR * 0.38) * scale, off = st.pOff ?? 0;
     const r0 = Math.max(0, base + off), r1 = Math.max(r0, tip + off);
     const px0 = c + Math.sin(a) * r0, py0 = c - Math.cos(a) * r0;
     const px1 = c + Math.sin(a) * r1, py1 = c - Math.cos(a) * r1;
@@ -751,6 +774,7 @@ function draw() {
                outline_w: el.outlineWidth, ridges: el.ridges ? el.ridges : undefined,
                cap: el.cap ? el.cap : undefined,
                hlAngle: el.highlightAngle !== undefined ? el.highlightAngle * Math.PI / 180 : undefined,
+               hlFade: isKnob ? el.highlightFade : undefined,
                pLen: el.pointerLength, pOff: el.pointerOffset,
                valueSize: el.valueSize, valueColour: el.valueColour,
                valueText: isKnob && el.showValue !== false ? String(Math.round(t * 100)) : undefined };
