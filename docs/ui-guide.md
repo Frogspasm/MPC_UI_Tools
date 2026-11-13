@@ -64,6 +64,7 @@ For full control over the look (images, custom widgets, envelopes), read `ui-ref
 | `pages[].controls[]` | Up to 16 entries. A plain string is a parameter **name** exactly as declared in code (`floatParam("cutoff", "Cutoff", ...)` → `"Cutoff"`), shown as a generic slider; the string `"empty"` leaves the slot blank. |
 | `widget` | `"knob"` (film-strip knob with name and value), `"fader"` (horizontal film-strip fader under a name / value header), `"switch"` (toggle for bool parameters, 2–4 captioned segment buttons for choice parameters), `"slider"` (default: the MPC's generic name + value bar), `"text"` (a static heading; needs `text`), `"empty"`. |
 | `polarity` | For `knob` and `fader`: `"auto"` (default), `"unipolar"` or `"bipolar"`. Bipolar strips fill from the centre. Auto picks bipolar when the parameter's default is the centre of its range and its value text reads as zero. |
+| `label` | The name shown on the MPC for a `knob`, `fader`, `switch` or `plotter` (up to 24 characters). Defaults to the parameter's name. `""` hides the name on the MPC, leaving only the value. Not used by `"slider"`, whose bar draws the parameter's own name. |
 | `overlay` | What double-tap / Enter opens: `"knob"` (big knob editor, default) or `"menu"` (a list; the default for `switch`, and the right choice for any long choice list). |
 | `visibleWhen` | Show this control only while another parameter has a given value: `{"param": "Wave", "choice": "Square"}` or `{"param": "Sync", "index": 1}`. Works with choice and bool parameters. |
 | `kit` | The film-strip theme for `knob` / `fader` / `switch`: `"mpc-red"` (assumed when absent), `"amber"`, `"cyan"`, `"lime"`, `"violet"`, `"mono"`, or `{ "theme": "...", "accent": "AARRGGBB" }`. See `ui-kit/README.md` and `ui-kit/preview.png`. |
@@ -97,6 +98,43 @@ Rules of thumb:
 - Make each block of four mean something. The four knobs of a Q-Link group drive its four controls and the focus rectangle wraps them, so put one related set in each block: the four stages of an envelope, the cutoff / resonance / drive / key-tracking of a filter, the time / feedback / tone / mix of a delay. A block of four can be a row or a column. Avoid splitting a section across two blocks, and avoid blocks that mix unrelated controls just to fill space; a deliberate `empty` slot or a `text` heading is better than a stray control.
 - One theme per plugin. `mpc-red` matches the MPC; `amber` suits drums and analogue-style synths, `cyan` delays, reverbs and digital effects, `lime` and `violet` playful instruments, `mono` utilities. An `accent` colour makes the kit match a brand.
 - Do not rely on colour alone; the MPC screen is small and often viewed from an angle. Short names and unit-bearing value text (`1.2 kHz`, `-6.0 dB`, `1/8T`) matter more than the graphics.
+
+## Artwork and live displays
+
+**Pictures.** Put PNG or JPEG files in the project's `assets/` folder (build.py copies that folder into `Plugin Skins/`) and name them in `ui.json`:
+
+```json
+{ "name": "BASS",
+  "background": "bg.png",
+  "art": [ { "image": "logo.png", "x": 900, "y": 20, "w": 300, "h": 100 } ],
+  "controls": [ ... ] }
+```
+
+`background` covers the whole 1280 x 628 tab area and sits under everything. `art` pictures are placed in tab pixels (0, 0 is the top-left of the area) and sit under the controls. Use file names only, not folders. The editor (`tools/ui_editor.html`) shows them when you load the assets folder.
+
+**Tiling.** Set `"backgroundTile": true` on a page, or `"tile": true` on an `art` item, to repeat the picture. `backgroundScale` and `scale` set the size of each tile as a percentage of the picture's own size (1 to 400, default 100). Each tile is one image on the tab, so keep the count modest: 400 per picture at most. Tiles along the right and bottom edges are squashed to fit the box, and the generator reads each picture's size from its file header.
+
+```json
+{ "name": "BASS", "background": "grain.png", "backgroundTile": true, "backgroundScale": 25, "controls": [ ... ] }
+```
+
+**Groups.** A labelled rounded outline around a set of related controls, drawn behind them. Give each as tab pixels, with an optional label of up to 40 characters that sits in the band above the outline's top edge:
+
+```json
+{ "name": "BASS",
+  "groups": [ { "x": 9, "y": 0, "w": 626, "h": 166, "label": "Filter" } ],
+  "controls": [ ... ] }
+```
+
+The generator writes each outline as `group-<page>-<n>.png` into Plugin Skins/. The outline does not move with the controls. Leave 14 px on the sides and below the controls and about 36 px above them, so the label has room.
+
+**Plotter.** A scrolling trace of one value the plugin writes for the screen. It needs a parameter that is not automatable (`automatable = false` in `addParam`), so the host does not treat it as a control:
+
+```json
+{ "param": "LFO View", "widget": "plotter", "min": 0, "max": 1 }
+```
+
+`min` and `max` give the range of the value being drawn. The plugin fills it with `setDisplayNormalised()`. A plotter takes a slot and has no Q-Link. Not yet tested on hardware: it is not confirmed whether the plotter reads the plain value (here 0..100) or the normalised 0..1 value. If a trace looks flat on the MPC, try `"min": 0, "max": 1`.
 
 ## Regenerating
 

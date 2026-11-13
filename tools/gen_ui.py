@@ -30,6 +30,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import sys
 
 # --------------------------------------------------------------------------------------------
@@ -50,11 +51,19 @@ DEFAULT_STYLE = {
     "muted": "ff6a6a6c",
 }
 
-WIDGETS = ("slider", "knob", "fader", "switch", "empty", "text")
+WIDGETS = ("slider", "knob", "fader", "switch", "empty", "text", "plotter")
 OVERLAYS = ("knob", "menu")
 POLARITIES = ("auto", "unipolar", "bipolar")
-CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity")
-PAGE_KEYS = ("name", "controls")
+CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity", "min", "max", "label")
+LABEL_MAX = 24   # longest on-screen label a control may have
+PLOTTER_HISTORY_SECONDS = 4.0
+PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups")
+GROUP_KEYS = ("x", "y", "w", "h", "label")
+GROUP_LABEL_MAX = 40
+GROUP_RADIUS = 12   # corner radius of a group outline, in pixels
+GROUP_STROKE = 2    # outline thickness, in pixels
+ART_KEYS = ("image", "x", "y", "w", "h", "tile", "scale")
+MAX_TILES = 400   # per picture; each tile is one Image component on the tab
 UI_KEYS = ("pages", "style", "kit", "knobImage", "knobFrames")
 KIT_KEYS = ("theme", "accent")
 KIT_WIDGETS = ("knob", "fader", "switch")
@@ -134,6 +143,7 @@ class Param:
         self.choices = choices  # list of labels for choice/bool kinds, else None
         self.default = default  # normalised default (0..1) when known
         self.display = display  # display text at the default value
+        self.automatable = True  # False for display-only parameters (plotters, meters)
 
     @property
     def looks_bipolar(self):
@@ -183,6 +193,7 @@ def load_params(path):
         params.append(Param(index, str(p["name"]), kind, [str(c) for c in choices] if choices else None,
                             default if isinstance(default, (int, float)) and not isinstance(default, bool) else None,
                             str(p.get("display", ""))))
+        params[-1].automatable = p.get("automatable", True) is not False
     if not params:
         fail(path, "the plugin reports no parameters; there is nothing to lay out.",
              "Add parameters with addParam() in the plugin source, or use --no-ui in build.py.")
@@ -217,13 +228,15 @@ class ParamTable:
 # ui.json
 # --------------------------------------------------------------------------------------------
 class Control:
-    def __init__(self, widget, param=None, text=None, visible=None, overlay="knob", polarity="auto"):
-        self.widget = widget      # slider | knob | fader | switch | empty | text
+    def __init__(self, widget, param=None, text=None, visible=None, overlay="knob", polarity="auto", plot_range=None, label=None):
+        self.widget = widget      # slider | knob | fader | switch | empty | text | plotter
         self.param = param        # Param or None
         self.text = text          # for widget "text"
         self.visible = visible    # None or (Param, choiceIndex)
         self.overlay = overlay    # knob | menu
         self.polarity = polarity  # auto | unipolar | bipolar (knob and fader only)
+        self.plot_range = plot_range  # plotter only: (min, max) of the value it draws
+        self.label = label        # on-screen name, or None to show the parameter's name
 
     @property
     def bipolar(self):
@@ -236,17 +249,32 @@ class Control:
     @property
     def definition(self):
         """Name of the reusable component definition this control instantiates."""
+        if self.widget == "plotter":
+            return None   # drawn directly in the tab, not from a reusable definition
         if self.widget == "switch":
             return "toggle" if self.param.kind == "bool" or len(self.param.choices) == 1 else "radio%d" % len(self.param.choices)
         pol = "Bi" if self.bipolar else "Uni"
         base = {"slider": "sliderWithFocus", "knob": "knob" + pol, "fader": "fader" + pol}[self.widget]
         return base + ("Menu" if self.overlay == "menu" else "")
 
+    @property
+    def definition_key(self):
+        """Component definition name. A custom label needs its own definition, because the name
+        is drawn inside it. The part before '@' is the base definition (see build_tui)."""
+        if self.label is not None and self.widget != "slider":
+            return self.definition + "@" + self.label
+        return self.definition
+
 
 class Page:
-    def __init__(self, name, controls):
+    def __init__(self, name, controls, background=None, art=None, background_tile=False, background_scale=100, groups=None):
         self.name = name
         self.controls = controls  # list of Control, at most 16, in reading order
+        self.background_tile = background_tile   # True: repeat the background picture as tiles
+        self.background_scale = background_scale  # tile size as a percentage of the picture's own size
+        self.background = background  # file name of a full-tab image, or None
+        self.art = art or []          # [(file, x, y, w, h)] decorations, drawn under the controls
+        self.groups = groups or []    # outlines around related controls, drawn under the controls
 
 
 def check_keys(where, d, allowed):
@@ -290,6 +318,21 @@ def parse_visible_when(spec, table, where):
 
 
 def parse_control(spec, table, where):
+    control = parse_control_body(spec, table, where)
+    if isinstance(spec, dict) and "label" in spec:
+        label = spec["label"]
+        if not isinstance(label, str):
+            fail(where, '"label" must be a string (the name shown on the MPC; "" hides the name), got %s' % json.dumps(label))
+        if len(label.strip()) > LABEL_MAX:
+            fail(where, '"label" is %d characters; the most is %d.' % (len(label.strip()), LABEL_MAX),
+                 'Shorten it, e.g. "label": "Cutoff".')
+        if control.widget in ("empty", "text"):
+            fail(where, '"label" does not apply to a "%s" control.' % control.widget)
+        control.label = label.strip()   # the slider widget draws the parameter's own name, so it ignores this
+    return control
+
+
+def parse_control_body(spec, table, where):
     if isinstance(spec, str):
         if spec.strip().lower() == "empty" and spec not in table.by_name:
             return Control("empty")
@@ -311,6 +354,8 @@ def parse_control(spec, table, where):
     visible = parse_visible_when(spec["visibleWhen"], table, where) if "visibleWhen" in spec else None
     if widget == "empty":
         return Control("empty", visible=visible)
+    if widget != "plotter" and ("min" in spec or "max" in spec):
+        fail(where, '"min" and "max" only apply to the "plotter" widget (this control is a "%s")' % widget)
     if widget == "text":
         text = spec.get("text")
         if not isinstance(text, str):
@@ -319,6 +364,19 @@ def parse_control(spec, table, where):
     if "param" not in spec:
         fail(where, 'control needs a "param" (parameter name); use "widget": "empty" for a blank slot')
     param = table.lookup(spec["param"], where)
+    if widget == "plotter":
+        if param.is_discrete:
+            fail(where, '"plotter" draws a continuous value; "%s" is kind "%s".' % (param.name, param.kind),
+                 'Use "switch" for on/off or choice parameters.')
+        lo, hi = spec.get("min", 0), spec.get("max", 1)
+        if not all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in (lo, hi)) or hi <= lo:
+            fail(where, '"plotter" needs numeric "min" < "max" (the range of the value it draws), got min %s, max %s'
+                 % (json.dumps(lo), json.dumps(hi)),
+                 'Use the parameter\'s real range, e.g. {"param": "Out Level", "widget": "plotter", "min": 0, "max": 100}.')
+        if param.automatable:
+            print('gen_ui: NOTE: "%s" is automatable. A plotter should show a display-only parameter (automatable = false), '
+                  'so the host does not treat it as a control.' % param.name)
+        return Control("plotter", param=param, visible=visible, plot_range=(float(lo), float(hi)))
     if widget == "switch":
         if not param.is_discrete:
             fail(where, '"switch" needs a bool or choice parameter; "%s" is kind "%s".' % (param.name, param.kind),
@@ -384,7 +442,14 @@ def load_ui(path, table):
                  % (len(controls_spec), MAX_CONTROLS_PER_PAGE),
                  "Split the controls over more pages (add another entry to \"pages\").")
         controls = [parse_control(c, table, "%s.controls[%d]" % (where, ci)) for ci, c in enumerate(controls_spec)]
-        pages.append(Page(name, controls))
+        background = parse_image_name(pspec.get("background"), where + ' "background"')
+        bg_tile = pspec.get("backgroundTile", False)
+        if not isinstance(bg_tile, bool):
+            fail(where, '"backgroundTile" must be true or false')
+        bg_scale = parse_scale(pspec.get("backgroundScale", 100), where + ' "backgroundScale"')
+        art = [parse_art(a, where + ".art[%d]" % ai) for ai, a in enumerate(pspec.get("art", []))]
+        groups = [parse_group(g, where + ".groups[%d]" % gi) for gi, g in enumerate(pspec.get("groups", []))]
+        pages.append(Page(name, controls, background, art, bg_tile, bg_scale, groups))
 
     uses_kit = any(c.widget in KIT_WIDGETS for pg in pages for c in pg.controls)
     if kit is None and uses_kit:
@@ -392,6 +457,166 @@ def load_ui(path, table):
     elif kit is not None and not uses_kit:
         print('gen_ui: NOTE: "kit" is set but no control uses "knob", "fader" or "switch"; nothing from the kit is drawn.')
     return pages, style, knob_image, frames, kit
+
+
+def parse_image_name(value, where):
+    """A picture file name from the project's assets/ folder (copied into Plugin Skins/ by build.py)."""
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip() or "/" in value or "\\" in value:
+        fail(where, 'must be a file name in the project\'s assets/ folder (no folders), got %s' % json.dumps(value),
+             'Put the PNG or JPEG in assets/ and write just its name, for example "bg.png".')
+    if not value.lower().endswith((".png", ".jpg", ".jpeg")):
+        fail(where, 'must be a PNG or JPEG, got %s' % json.dumps(value))
+    return value
+
+
+def parse_scale(value, where):
+    """Tile scale as a whole percentage of the picture's own size (1 to 400)."""
+    if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 400:
+        fail(where, 'must be a whole percentage from 1 to 400, got %s' % json.dumps(value),
+             '100 draws each tile at the picture\'s own size; 50 halves it.')
+    return value
+
+
+def parse_art(spec, where):
+    """One picture laid over the tab: {"image": "logo.png", "x": 900, "y": 20, "w": 300, "h": 80} (tab pixels).
+    Optional "tile": true repeats it inside its box at "scale" percent of its own size."""
+    if not isinstance(spec, dict):
+        fail(where, 'must be an object like {"image": "logo.png", "x": 0, "y": 0, "w": 200, "h": 100}')
+    check_keys(where, spec, ART_KEYS)
+    for k in ("image", "x", "y", "w", "h"):
+        if k not in spec:
+            fail(where, 'is missing "%s"' % k)
+    image = parse_image_name(spec["image"], where + ' "image"')
+    x, y, w, h = (spec[k] for k in ("x", "y", "w", "h"))
+    for k, v in (("x", x), ("y", y), ("w", w), ("h", h)):
+        if not isinstance(v, int) or isinstance(v, bool):
+            fail(where, '"%s" must be a whole number of pixels, got %s' % (k, json.dumps(v)))
+    if w < 1 or h < 1 or x < 0 or y < 0 or x + w > 1280 or y + h > 628:
+        fail(where, "must lie inside the 1280 x 628 tab area (x 0-1279, y 0-627, w and h at least 1)")
+    tile = spec.get("tile", False)
+    if not isinstance(tile, bool):
+        fail(where, '"tile" must be true or false')
+    scale = parse_scale(spec.get("scale", 100), where + ' "scale"')
+    return {"image": image, "x": x, "y": y, "w": w, "h": h, "tile": tile, "scale": scale, "cells": None}
+
+
+def parse_group(spec, where):
+    """A labelled outline around a set of controls, in tab pixels:
+    {"x": 20, "y": 9, "w": 300, "h": 180, "label": "Filter"}. The label is optional."""
+    if not isinstance(spec, dict):
+        fail(where, 'must be an object like {"x": 20, "y": 9, "w": 300, "h": 180, "label": "Filter"}')
+    check_keys(where, spec, GROUP_KEYS)
+    for k in ("x", "y", "w", "h"):
+        if k not in spec:
+            fail(where, 'is missing "%s"' % k)
+        if not isinstance(spec[k], int) or isinstance(spec[k], bool):
+            fail(where, '"%s" must be a whole number of pixels, got %s' % (k, json.dumps(spec[k])))
+    x, y, w, h = (spec[k] for k in ("x", "y", "w", "h"))
+    if w < 1 or h < 1 or x < 0 or y < 0 or x + w > 1280 or y + h > 628:
+        fail(where, "must lie inside the 1280 x 628 tab area (x 0-1279, y 0-627, w and h at least 1)")
+    label = spec.get("label", "")
+    if not isinstance(label, str):
+        fail(where, '"label" must be a string')
+    if len(label) > GROUP_LABEL_MAX:
+        fail(where, '"label" is %d characters; the most is %d.' % (len(label), GROUP_LABEL_MAX))
+    return {"x": x, "y": y, "w": w, "h": h, "label": label.strip(), "image": None}
+
+
+def write_group_png(path, w, h, argb):
+    """A rounded-rectangle outline as an RGBA PNG (no fill). Pure Python, so no image library is needed."""
+    import zlib
+    a0, r0, g0, b0 = (int(argb[i:i + 2], 16) for i in (0, 2, 4, 6))
+    rad, st = float(GROUP_RADIUS), GROUP_STROKE
+
+    def inside(px, py, x0, y0, x1, y1, r):
+        # Rounded rectangle test for a pixel centre: clamp to the inner rectangle, then check the distance.
+        qx = min(max(px, x0 + r), x1 - r)
+        qy = min(max(py, y0 + r), y1 - r)
+        return (px - qx) ** 2 + (py - qy) ** 2 <= r * r
+
+    rows = []
+    for yy in range(h):
+        row = bytearray([0])   # PNG filter type 0
+        py = yy + 0.5
+        for xx in range(w):
+            px = xx + 0.5
+            on = inside(px, py, 0, 0, w, h, rad) and not inside(px, py, st, st, w - st, h - st, max(0.0, rad - st))
+            row += bytes((r0, g0, b0, 255 if on else 0)) if on else b"\x00\x00\x00\x00"
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b"")
+    with open(path, "wb") as f:
+        f.write(png)
+
+
+def image_size(path):
+    """(width, height) of a PNG or JPEG read from its header, or None if it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError:
+        return None
+    if data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR":
+        return struct.unpack(">II", data[16:24])
+    if data[:2] == b"\xff\xd8":
+        i = 2
+        while i + 9 < len(data):
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                h, w = struct.unpack(">HH", data[i + 5:i + 9])
+                return (w, h)
+            i += 2 + struct.unpack(">H", data[i + 2:i + 4])[0]
+    return None
+
+
+def tile_cells(x, y, w, h, tw, th):
+    """Rectangles covering x, y, w, h with tw x th tiles. Edge tiles are shrunk to fit the box."""
+    return [(x + tx, y + ty, min(tw, w - tx), min(th, h - ty))
+            for ty in range(0, h, th) for tx in range(0, w, tw)]
+
+
+def layout_pictures(pages, assets_dir):
+    """Work out the rectangles each picture is drawn in (one per tile for tiled pictures)."""
+    for pg in pages:
+        if pg.background:
+            cells = [(0, 0, 1280, 628)]
+            if pg.background_tile:
+                size = image_size(os.path.join(assets_dir, pg.background)) if assets_dir else None
+                if size is None:
+                    print('gen_ui: WARNING: cannot read the size of "%s" on page "%s"; it is drawn untiled.' % (pg.background, pg.name))
+                else:
+                    tw = max(1, round(size[0] * pg.background_scale / 100))
+                    th = max(1, round(size[1] * pg.background_scale / 100))
+                    cells = tile_cells(0, 0, 1280, 628, tw, th)
+            pg.background_cells = cells
+        for pic in pg.art:
+            cells = [(pic["x"], pic["y"], pic["w"], pic["h"])]
+            if pic["tile"]:
+                size = image_size(os.path.join(assets_dir, pic["image"])) if assets_dir else None
+                if size is None:
+                    print('gen_ui: WARNING: cannot read the size of "%s" on page "%s"; it is drawn untiled.' % (pic["image"], pg.name))
+                else:
+                    tw = max(1, round(size[0] * pic["scale"] / 100))
+                    th = max(1, round(size[1] * pic["scale"] / 100))
+                    cells = tile_cells(pic["x"], pic["y"], pic["w"], pic["h"], tw, th)
+            pic["cells"] = cells
+        for pic in pg.art:
+            if len(pic["cells"]) > MAX_TILES:
+                fail(None, 'picture "%s" on page "%s" would need %d tiles; the limit is %d.'
+                     % (pic["image"], pg.name, len(pic["cells"]), MAX_TILES),
+                     "Use a larger scale (a smaller number of tiles) or a smaller box.")
+        if len(getattr(pg, "background_cells", [])) > MAX_TILES:
+            fail(None, 'the background of page "%s" would need %d tiles; the limit is %d.'
+                 % (pg.name, len(pg.background_cells), MAX_TILES), "Use a larger backgroundScale.")
 
 
 def parse_kit(spec, path, accent_in_style, style):
@@ -485,15 +710,24 @@ def button_data(on_image, off_image, button_id, group_size):
                ("numButtonsInGroup", group_size), ("handleName", "Data"), ("gestureBehaviour", "Instant"))
 
 
-def label_data(label_type, colour, height=30.0, justification="left", text=None):
+def label_data(label_type, colour, height=30.0, justification="left", text=None, handle=True):
+    """A text label. handle=True takes its text from the parameter ("Data" handle); a fixed text
+    (text given) is written without the handle so it stays as the user wrote it."""
     pairs = [("version", 1),
              ("textStyle", obj(("version", 1),
                                ("font", obj(("version", 1), ("name", FONT_NAME), ("style", "Regular"), ("height", float(height)))),
                                ("colour", colour), ("justification", justification), ("case", "Original"))),
-             ("type", label_type), ("handleName", "Data")]
+             ("type", label_type)]
+    if handle:
+        pairs.append(("handleName", "Data"))
     if text is not None:
         pairs.append(("text", text))
     return Obj(pairs)
+
+
+def name_label(style, height, justification, name_text, colour_key="muted"):
+    """The parameter-name label of a control: the parameter's name, or the user's label when given."""
+    return label_data("Name", style[colour_key], height, justification, name_text, handle=name_text is None)
 
 
 def focus_data(accent):
@@ -539,50 +773,55 @@ def slider_component(style, overlay_name):
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
-def knob_component(style, overlay_name, knob_image, frames, bipolar=False):
+def knob_stacked(style, knob, size, name_text=None):
+    """Knob layout: the name is centred above the knob, and the value is centred on the knob's middle.
+    The knob sits at the bottom of the slot, centred horizontally."""
+    band = SLOT_H - size                     # height left above the knob for the name
+    x = (SLOT_W - size) // 2
+    name_font = max(14, min(26, round(band * 0.92)))
+    return [entry("knob", "Knob", knob, "%d %d %d %d" % (x, band, size, size), "No", "Show", "Always"),
+            entry("name", "Label", name_label(style, float(name_font), "horizontallyCentred verticallyCentred", name_text),
+                  "0 0 %d %d" % (SLOT_W, band), "No", "Show", "Always"),
+            entry("value", "Label", label_data("Value", style["text"], 22.0, "horizontallyCentred verticallyCentred"),
+                  "%d %d %d 32" % (x, band + size // 2 - 16, size), "No", "Show", "Always")]
+
+
+def knob_component(style, overlay_name, knob_image, frames, bipolar=False, name_text=None):
     """A knob slot. knob_image: (file, frames, size) for a film strip, or None for the generic knob."""
     if knob_image:
         image, frames, size = knob_image
         knob = knob_filmstrip_data(image, frames)
-        kx = ky = (107 - size) // 2 if size <= 107 else 0
-        tx, tw = kx + size + 12, 266 - kx - size - 12
-        children = [focus_child(style),
-                    entry("knob", "Knob", knob, "%d %d %d %d" % (kx, ky, size, size), "No", "Show", "Always"),
-                    entry("name", "Label", label_data("Name", style["muted"], 26.0), "%d 12 %d 36" % (tx, tw), "No", "Show", "Always"),
-                    entry("value", "Label", label_data("Value", style["text"], 30.0), "%d 52 %d 42" % (tx, tw), "No", "Show", "Always")]
     else:
+        size = 77
         knob = obj(("version", 5), ("knobType", "GenericLegacy"), ("polarity", "BiPolar" if bipolar else "UniPolar"),
                    ("dragOrientation", "Vertical"), ("handleName", "Data"))
-        children = [focus_child(style),
-                    entry("knob", "Knob", knob, "15 15 77 77", "No", "Show", "Always"),
-                    entry("name", "Label", label_data("Name", style["muted"], 26.0), "104 14 160 38", "No", "Show", "Always"),
-                    entry("value", "Label", label_data("Value", style["text"], 30.0), "104 54 160 40", "No", "Show", "Always")]
+    children = [focus_child(style)] + knob_stacked(style, knob, size, name_text)
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
-def fader_component(style, overlay_name, image, frames):
+def fader_component(style, overlay_name, image, frames, name_text=None):
     """A horizontal film-strip fader (248 x 36) under a name / value header. Drawn by the Knob widget with a horizontal drag."""
     children = [focus_child(style),
-                entry("name", "Label", label_data("Name", style["muted"], 24.0), "15 8 135 34", "No", "Show", "Always"),
+                entry("name", "Label", name_label(style, 24.0, "left", name_text), "15 8 135 34", "No", "Show", "Always"),
                 entry("value", "Label", label_data("Value", style["text"], 26.0, "right"), "150 8 113 34", "No", "Show", "Always"),
                 entry("fader", "Knob", knob_filmstrip_data(image, frames, "Horizontal"), "15 54 248 36", "No", "Show", "Always")]
     return component_definition(control_actions(overlay_name), children, "00000000")
 
 
-def toggle_component(style, overlay_name):
+def toggle_component(style, overlay_name, name_text=None):
     """A bool switch: name and value text on the left, a pill toggle (Button widget) on the right."""
     children = [focus_child(style),
-                entry("name", "Label", label_data("Name", style["muted"], 26.0), "15 12 170 36", "No", "Show", "Always"),
+                entry("name", "Label", name_label(style, 26.0, "left", name_text), "15 12 170 36", "No", "Show", "Always"),
                 entry("value", "Label", label_data("Value", style["text"], 30.0), "15 52 170 42", "No", "Show", "Always"),
                 entry("toggle", "Button", button_data("toggle_on.png", "toggle_off.png", 1, 1), "186 20 84 68", "No", "Show", "Always")]
     return component_definition(control_actions(overlay_name, double_click=False), children, "00000000")
 
 
-def radio_component(style, overlay_name, n):
+def radio_component(style, overlay_name, n, name_text=None):
     """An n-way choice switch: name on top, n segment buttons below (their captions are added by the tab)."""
     width, xs = SEGMENTS[n]
     children = [focus_child(style),
-                entry("name", "Label", label_data("Name", style["muted"], 24.0), "15 8 248 34", "No", "Show", "Always")]
+                entry("name", "Label", name_label(style, 24.0, "left", name_text), "15 8 248 34", "No", "Show", "Always")]
     for i, x in enumerate(xs):
         children.append(entry("seg %d" % i, "Button", button_data("seg%d_on.png" % n, "seg%d_off.png" % n, i, n),
                               "%d 54 %d 40" % (x, width), "No", "Show", "Always"))
@@ -597,8 +836,46 @@ def overlay_component(type_name, data, bg_colour):
 # --------------------------------------------------------------------------------------------
 # Assembling the two files
 # --------------------------------------------------------------------------------------------
+def image_entry(name, image, x, y, w, h):
+    """A picture drawn at absolute tab coordinates; it takes no touches or focus."""
+    return entry(name, "Image", obj(("version", 2), ("imageType", "Regular"), ("colour", "0"), ("image", image)),
+                 "%d %d %d %d" % (x, y, w, h), "No", "Show", "Always")
+
+
+PLOTTER_H = 80   # slot height used by a plotter; the name sits under it
+
+
+def plotter_data(style, plot_range):
+    """A scrolling trace of one display-only parameter. The 'Data' handle is remapped to the parameter."""
+    lo, hi = plot_range
+    acc = style["accent"]
+    return obj(("version", 2), ("backgroundColour", style["background"]), ("drawLine", True),
+               ("lineDirection", "Up"), ("lineColourStart", acc), ("lineColourEnd", acc),
+               ("horizLineGradient", False), ("lineWidth", 2.0),
+               ("fillColourStart", "40" + acc[2:]), ("fillColourEnd", "00" + acc[2:]),
+               ("horizFillGradient", False), ("fillZero", 0.0), ("dataHandle", "Data"),
+               ("dataMin", lo), ("dataMax", hi), ("drawHistory", True), ("historyDirection", "Left"),
+               ("historyColour1", "30" + acc[2:]), ("historyColour2", "08" + acc[2:]),
+               ("historyTime", PLOTTER_HISTORY_SECONDS), ("historySkipFrames", 5))
+
+
 def tab_component(page, style):
     children = []
+    # Paint order is first = bottom: background, then art, then the controls on top.
+    if page.background:
+        for ci, (x, y, w, h) in enumerate(page.background_cells):
+            name = "background" if len(page.background_cells) == 1 else "background tile %d" % ci
+            children.append(image_entry(name, page.background, x, y, w, h))
+    for ai, pic in enumerate(page.art):
+        for ci, (x, y, w, h) in enumerate(pic["cells"]):
+            name = "art %d" % ai if len(pic["cells"]) == 1 else "art %d tile %d" % (ai, ci)
+            children.append(image_entry(name, pic["image"], x, y, w, h))
+    # Groups: an outline picture with its label in the band above the outline's top edge.
+    for gi, g in enumerate(page.groups):
+        children.append(image_entry("group %d" % gi, g["image"], g["x"], g["y"], g["w"], g["h"]))
+        if g["label"]:
+            children.append(entry("group %d label" % gi, "Label", label_data("Text", style["accent"], 20.0, "left", g["label"]),
+                                  "%d %d %d 26" % (g["x"] + 18, g["y"] + 6, g["w"] - 36), "No", "Show", "Always"))
     for i, ctl in enumerate(page.controls):
         row, col = divmod(i, 4)
         bounds = "%d %d %d %d" % (SLOT_X[col], SLOT_Y[row], SLOT_W, SLOT_H)
@@ -612,7 +889,15 @@ def tab_component(page, style):
             children.append(entry("text %d" % i, "Label", label_data("Text", style["text"], 30.0, "left", ctl.text),
                                   bounds, "No", "Show", "Always", invalidating=invalidating))
             continue
-        children.append(entry(ctl.param.name, ctl.definition, obj(("version", 1), ("handleName", "Data")), bounds,
+        if ctl.widget == "plotter":
+            children.append(entry(ctl.param.name + " plot", "Plotter", plotter_data(style, ctl.plot_range),
+                                  "%d %d %d %d" % (SLOT_X[col], SLOT_Y[row], SLOT_W, PLOTTER_H),
+                                  "No", "Hide", "Always", remap=[("Data", ctl.param.handle)], invalidating=invalidating))
+            children.append(entry(ctl.param.name + " name", "Label", name_label(style, 22.0, "left", ctl.label),
+                                  "%d %d %d 24" % (SLOT_X[col], SLOT_Y[row] + PLOTTER_H + 4, SLOT_W),
+                                  "No", "Hide", "Always", invalidating=invalidating))
+            continue
+        children.append(entry(ctl.param.name, ctl.definition_key, obj(("version", 1), ("handleName", "Data")), bounds,
                               "Yes", "Hide", "Always", remap=[("Data", ctl.param.handle)], invalidating=invalidating))
         if ctl.definition.startswith("radio"):
             # Segment captions live in the tab (the definition is shared by every n-way switch).
@@ -628,10 +913,14 @@ def tab_component(page, style):
 def build_tui(pages, params, style, knob_image, frames, kit_assets):
     """kit_assets: dict asset name -> (file, frames, (w, h)) for the kit files available, or {} without a kit."""
     used = []
+    label_of = {}   # definition key -> the custom label it draws (only for keys with one)
     for page in pages:
         for ctl in page.controls:
-            if ctl.param is not None and ctl.definition not in used:
-                used.append(ctl.definition)
+            key = ctl.definition_key
+            if ctl.param is not None and ctl.widget != "plotter" and key not in used:
+                used.append(key)
+                if ctl.label is not None and ctl.widget != "slider":
+                    label_of[key] = ctl.label
     if "sliderWithFocus" not in used:
         used.insert(0, "sliderWithFocus")  # always present, so hand edits have a template to copy
 
@@ -642,29 +931,32 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
 
     defs = []
     for name in used:
-        menu = name.endswith("Menu")
-        overlay = "menu overlay" if menu else ("knob overlay bipolar" if "Bi" in name else "knob overlay")
-        base = name[:-4] if menu else name
+        # The part before '@' is the base definition; a custom label after it changes only the name text.
+        full = name.split("@")[0]
+        text = label_of.get(name)
+        menu = full.endswith("Menu")
+        overlay = "menu overlay" if menu else ("knob overlay bipolar" if "Bi" in full else "knob overlay")
+        base = full[:-4] if menu else full
         if base == "sliderWithFocus":
             comp = slider_component(style, overlay)
         elif base in ("knobUni", "knobBi"):
             if knob_image:
-                comp = knob_component(style, overlay, (knob_image, frames, 77), frames, bipolar=(base == "knobBi"))
+                comp = knob_component(style, overlay, (knob_image, frames, 77), frames, bipolar=(base == "knobBi"), name_text=text)
             elif kit_assets:
                 f, n, size = kit("knob_uni" if base == "knobUni" else "knob_bi")
-                comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=(base == "knobBi"))
+                comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=(base == "knobBi"), name_text=text)
             else:
-                comp = knob_component(style, overlay, None, frames, bipolar=(base == "knobBi"))
+                comp = knob_component(style, overlay, None, frames, bipolar=(base == "knobBi"), name_text=text)
         elif base in ("faderUni", "faderBi"):
             f, n, _ = kit("fader_h_uni" if base == "faderUni" else "fader_h_bi")
-            comp = fader_component(style, overlay, f, n)
+            comp = fader_component(style, overlay, f, n, name_text=text)
         elif base == "toggle":
             kit("toggle_on"), kit("toggle_off")
-            comp = toggle_component(style, overlay)
+            comp = toggle_component(style, overlay, name_text=text)
         elif base.startswith("radio"):
             n = int(base[5:])
             kit("seg%d_on" % n), kit("seg%d_off" % n)
-            comp = radio_component(style, overlay, n)
+            comp = radio_component(style, overlay, n, name_text=text)
         else:
             fail(None, "internal error: no builder for component %s" % name)
         defs.append((name, comp))
@@ -704,7 +996,7 @@ def build_qlinks(pages, params):
     for ti, page in enumerate(pages):
         assigned = {}
         for i, ctl in enumerate(page.controls):
-            if ctl.param is not None:
+            if ctl.param is not None and ctl.widget != "plotter":   # display-only: no hardware knob
                 row, col = divmod(i, 4)
                 assigned[slot_qlink(row, col)] = ctl.param.index
         qmap = Obj(("Q-Link %d" % q, assigned.get(q, -1)) for q in range(1, 17))
@@ -768,11 +1060,22 @@ def generate(params_path, ui_path, out_dir, assets_dir=None, quiet=False, kit_ca
         if assets_dir and not os.path.isfile(os.path.join(assets_dir, knob_image)):
             print('gen_ui: WARNING: knobImage "%s" not found in %s; the knob will render blank on the MPC.'
                   ' (tools/make_knob.py can generate one.)' % (knob_image, assets_dir))
+    if assets_dir:
+        for pg in pages:
+            for image in ([pg.background] if pg.background else []) + [a["image"] for a in pg.art]:
+                if not os.path.isfile(os.path.join(assets_dir, image)):
+                    print('gen_ui: WARNING: picture "%s" on page "%s" not found in %s; nothing will be drawn for it.'
+                          % (image, pg.name, assets_dir))
     if len(pages) > 6 and not quiet:
         print("gen_ui: NOTE: %d pages; the MPC screen has six function keys, so tabs beyond the sixth are untested." % len(pages))
 
     os.makedirs(out_dir, exist_ok=True)
     kit_dir, kit_assets = (kit_dir_for(kit, kit_cache, out_dir) if kit else (None, {}))
+    layout_pictures(pages, assets_dir)
+    for pi, pg in enumerate(pages):
+        for gi, g in enumerate(pg.groups):
+            g["image"] = "group-%d-%d.png" % (pi + 1, gi + 1)
+            write_group_png(os.path.join(out_dir, g["image"]), g["w"], g["h"], style["accent"])
     tui = build_tui(pages, params, style, knob_image, frames, kit_assets)
     qlinks = build_qlinks(pages, params)
     if kit_dir and os.path.abspath(kit_dir) != os.path.abspath(out_dir):

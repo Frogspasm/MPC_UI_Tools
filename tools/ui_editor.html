@@ -1,0 +1,1721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>MPC UI Layout Editor</title>
+<!-- Titillium Web is the MPC's UI font (docs/ui-reference.md 1.5). Offline, the preview falls back to a system font. -->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap">
+<style>
+:root{--bg:#121113;--panel:#1e1d1e;--line:#333236;--text:#eee;--muted:#8a8890;--accent:#d31145;--kit:#d31145;--ok:#3fb27f;--warn:#e0a030;--err:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,"Segoe UI",Roboto,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:2}
+header h1{font-size:15px;margin:0 10px 0 0}
+button,select,input{font:inherit;color:inherit;background:#2a292c;border:1px solid var(--line);border-radius:6px;padding:5px 9px}
+button{cursor:pointer}
+button:hover{border-color:var(--accent)}
+button:disabled{opacity:.4;cursor:default;border-color:var(--line)}
+button.primary{background:var(--accent);border-color:var(--accent)}
+main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;padding:12px;align-items:start}
+@media (max-width:1000px){main{grid-template-columns:1fr}}
+/* Side columns stay in view while the screen column scrolls; each scrolls on its own if it is taller than the window. */
+.side{position:sticky;top:var(--hdr,64px);max-height:calc(100vh - var(--hdr,64px) - 12px);overflow-y:auto;padding-right:4px}
+@media (max-width:1000px){.side{position:static;max-height:none;overflow:visible}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px}
+.panel h2{font-size:12px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:2px 0 8px}
+.row{display:flex;gap:6px;align-items:center;margin:5px 0}
+.row label{width:84px;color:var(--muted);flex:none}
+.row select,.row input{flex:1;min-width:0}
+.page{display:flex;gap:4px;align-items:center;padding:3px;border-radius:6px;margin-bottom:3px}
+.page.cur{background:#2a292c;outline:1px solid var(--accent)}
+.page.over,#devTabs button.over{outline:2px dashed var(--accent);outline-offset:1px}
+.page input{flex:1;min-width:0;padding:4px 6px}
+.page button{padding:3px 7px}
+#palette{max-height:52vh;overflow:auto;display:flex;flex-direction:column;gap:3px;margin-top:6px}
+.item{padding:5px 8px;border:1px solid var(--line);border-radius:6px;background:#242327;cursor:grab;display:flex;justify-content:space-between;gap:6px;user-select:none}
+.item.used{opacity:.55}
+.item.special{border-style:dashed}
+.item small{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage{position:relative;width:100%;padding-top:49.0625%;background:#1e1d1e;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.canvas{position:absolute;inset:0}
+.bank{position:absolute;border:1px dashed #55535a;border-radius:6px;pointer-events:none}
+.bank span{position:absolute;top:2px;left:4px;font-size:10px;color:var(--muted);white-space:nowrap}
+.slot{position:absolute;border:1px solid #3a393e;border-radius:6px;background:#17161a;display:flex;flex-direction:column;justify-content:center;padding:6px 8px;overflow:hidden;cursor:pointer}
+.slot.blank{border-style:dashed;color:var(--muted);align-items:center;justify-content:center}
+.slot.sel{outline:2px solid var(--accent)}
+.slot.over{background:#2b1e24}
+.slot.bad{border-color:var(--err)}
+.slot .q{position:absolute;top:3px;right:6px;font-size:10px;color:var(--muted)}
+/* Name, value and graphic keep their height in a small slot, so their text can still be clicked. */
+.slot > *{flex:none}
+/* A filled slot starts at its top, so a tall stack of name, value and graphic is cut off at the bottom, never the name. */
+.slot:not(.blank){justify-content:flex-start}
+.slot .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-right:30px}
+.slot .wd{font-size:11px;color:var(--muted)}
+.slot .gfx{margin-top:4px;display:flex}
+.knob{width:30px;height:30px;border-radius:50%;border:3px solid #6a6a6c;border-top-color:var(--kit)}
+.fader{height:8px;width:70%;border-radius:4px;background:#333;position:relative;margin-top:6px}
+.fader::after{content:"";position:absolute;left:55%;top:-4px;width:8px;height:16px;border-radius:3px;background:var(--kit)}
+.switch{width:44px;height:18px;border-radius:9px;background:var(--kit)}
+.plot{width:100%;height:28px;border-bottom:2px solid var(--kit);background:linear-gradient(180deg,#d3114540,#d3114500)}
+.pic{position:absolute;overflow:hidden;pointer-events:none;border:1px dashed #5a5860;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
+.pic img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill}
+.pic .tiled{position:absolute;inset:0;background-repeat:repeat;background-position:0 0}
+.pic.art{pointer-events:auto;cursor:move;touch-action:none}
+.pic.art.sel{outline:2px solid var(--accent);border-style:solid}
+.pic-grip{position:absolute;right:0;bottom:0;width:14px;height:14px;background:var(--accent);cursor:nwse-resize;border-top-left-radius:3px}
+/* Group outline: drawn behind the controls. Only its edge band, label and corner grip take the pointer. */
+.grp{position:absolute;box-sizing:border-box;pointer-events:none;border:calc(var(--s) * 2px) solid var(--kit);border-radius:calc(var(--s) * 12px)}
+.grp.sel{box-shadow:0 0 0 calc(var(--s) * 2px) #ffffff66}
+.grp-hit{position:absolute;inset:calc(var(--s) * -8px);border:calc(var(--s) * 8px) solid transparent;pointer-events:auto;cursor:move}
+.grp-lbl{position:absolute;pointer-events:auto;cursor:move;display:flex;align-items:center;font-family:'Titillium Web',system-ui,sans-serif;font-size:calc(var(--s) * 20px);line-height:1;color:var(--kit);white-space:nowrap;overflow:hidden}
+.grp .pic-grip{pointer-events:auto}
+.band{position:absolute;pointer-events:none;border:1px dashed var(--accent);background:#d3114522;border-radius:3px}
+#device.actual{width:570px;max-width:100%}
+.devbar{background:#0c0c0d;color:#77757c;display:flex;align-items:center;justify-content:center;font-size:11px;overflow:hidden}
+#devTop{aspect-ratio:1280/110;border-radius:8px 8px 0 0}
+#devTabs{aspect-ratio:1280/62;border-radius:0 0 8px 8px;gap:2px;padding:0 2px;justify-content:stretch}
+#devTabs button{flex:1;min-width:0;height:80%;padding:0 2px;border-radius:3px;background:#1d1c1f;border:1px solid #333236;color:#bbb;font-family:'Titillium Web',system-ui,sans-serif;font-size:calc(var(--s) * 22px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#devTabs button.cur{background:var(--kit);border-color:var(--kit);color:#fff}
+#device.dev .stage{border-radius:0;border-left:none;border-right:none}
+.slot.dev{background:transparent;border-color:transparent;padding:0;display:block;overflow:visible;border-radius:0}
+.slot.dev.blank{border:1px dashed rgba(128,128,128,.35)}
+.slot.dev.sel{outline:1px solid var(--kit)}
+.slot.dev.sel::before{content:"";position:absolute;inset:calc(var(--s) * 4px);background:#ffffff19;pointer-events:none}
+.slot.dev.over{background:rgba(128,128,128,.25)}
+.slot.dev.bad{border:1px solid var(--err)}
+.stage.filedrop{outline:2px dashed var(--accent);outline-offset:-4px}
+.pic span{position:relative;background:#00000088;padding:0 4px;border-radius:3px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.artRow{display:grid;grid-template-columns:1fr 52px 52px 52px 52px auto;gap:4px;align-items:center;margin:4px 0}
+.artRow input{min-width:0;padding:4px 5px}
+.kitSwatch{display:inline-block;width:22px;height:22px;border-radius:50%;border:2px solid #6a6a6c;flex:none;background:var(--kit)}
+.textw{font-style:italic;color:#ddd;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.errs{color:var(--err);font-size:12px}
+.warns{color:var(--warn);font-size:12px}
+.ok{color:var(--ok);font-size:12px}
+#status{color:var(--muted);font-size:12px;margin-left:auto;max-width:520px;text-align:right}
+.note{color:var(--muted);font-size:12px;margin:6px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>MPC UI Layout Editor</h1>
+  <button id="bParams">Load params.json</button>
+  <button id="bLoad">Open ui.json</button>
+  <button id="bSave" class="primary">Save ui.json</button>
+  <button id="bNew">New</button>
+  <button id="bUndo" disabled title="Undo (Ctrl+Z)">Undo</button>
+  <button id="bRedo" disabled title="Redo (Ctrl+Y or Ctrl+Shift+Z)">Redo</button>
+  <input type="file" id="fParams" accept=".json" hidden>
+  <input type="file" id="fUi" accept=".json" hidden>
+  <button id="bReopen" hidden title="Reload the remembered files from disk. This replaces unsaved edits.">Reopen from disk</button>
+  <span id="files" class="note" style="margin:0"></span>
+  <span id="status"></span>
+</header>
+<main>
+  <div class="side">
+    <div class="panel">
+      <h2>Pages</h2>
+      <div id="pages"></div>
+      <button id="addPage">+ Add page</button>
+      <div class="note" id="pageCount"></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Parameters</h2>
+      <input id="search" placeholder="Search parameters" style="width:100%">
+      <div class="note">Drag a parameter onto a slot, or double-click it to use the first blank slot on this page. Drag a slot back here to clear it.</div>
+      <div id="palette"></div>
+    </div>
+  </div>
+  <div>
+    <div class="panel">
+      <h2 id="stageTitle">Screen</h2>
+      <div class="row"><input type="checkbox" id="devOn" style="flex:none;width:auto"><span>Device view</span><input type="checkbox" id="devSize" style="flex:none;width:auto;margin-left:14px"><span>Actual size (7-inch screen)</span></div>
+      <div class="note" id="stageNote"></div>
+      <div id="device">
+        <div id="devTop" class="devbar" hidden>Header drawn by the MPC (110 px). Not reproduced.</div>
+        <div class="stage" id="stage"><div class="canvas" id="canvas"></div></div>
+        <div id="devTabs" class="devbar" hidden></div>
+      </div>
+      <h2 style="margin-top:12px">Checks</h2>
+      <div id="warnings"></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Artwork on this page</h2>
+      <div class="note">Drag a picture on the screen to move it, or its corner square to resize it. Drop PNG or JPEG files on the screen to add them. Delete removes the selected picture. Pictures come from the project's assets/ folder, which build.py copies into Plugin Skins/, so copy any dropped file there too. Positions are tab pixels. The background fills the whole area and sits under everything else.</div>
+      <div class="row"><label>Background</label><input id="bgName" placeholder="bg.png (optional)"></div>
+      <div class="row"><input type="checkbox" id="bgTile" style="flex:none;width:auto"><span>Tile it</span><input id="bgScale" type="number" min="1" max="400" step="1" style="flex:none;width:70px"><span>% of picture size</span></div>
+      <div id="artList"></div>
+      <div class="row"><button id="addArt">+ Add picture</button><button id="bAssets" style="margin-left:auto">Assets folder…</button><input type="file" id="fAssets" webkitdirectory hidden></div>
+      <div class="note" id="assetsNote"></div>
+    </div>
+  </div>
+  <div class="side">
+    <div class="panel">
+      <h2>Selected slot</h2>
+      <div id="inspector"></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Kit</h2>
+      <div class="row"><label>Theme</label><select id="kitTheme"></select><span id="kitSwatch" class="kitSwatch" title="Kit accent colour"></span></div>
+      <div class="row"><input type="checkbox" id="artOn" style="flex:none;width:auto"><span>Show kit artwork</span><button id="bKitDir" style="margin-left:auto">Kit folder…</button><input type="file" id="fKitDir" webkitdirectory hidden></div>
+      <div class="note" id="artNote"></div>
+      <div class="row"><label>Accent</label><input id="kitAccent" placeholder="ff19c6e0 (optional)"><input type="color" id="kitPick" title="Pick an accent colour" style="flex:none;width:44px;padding:2px"></div>
+      <div class="note">Sets the look of knob, fader and switch widgets. Picking an accent overrides the theme's colour. Clear the text box to go back to the theme.</div>
+      <div class="row"><label>Background</label><input type="color" id="bgPick" title="Screen background colour" style="flex:none;width:44px;padding:2px"><button id="bgClear" style="margin-left:auto">Default</button></div>
+      <div class="note">The colour behind the controls on every tab (the ui.json "style" background). A background picture covers it.</div>
+    </div>
+  </div>
+</main>
+<script>
+// Layout constants from tools/gen_ui.py (1280 x 628 tab area, 4 x 4 grid, reading order).
+const SLOT_X = [23, 343, 663, 983], SLOT_Y = [45, 196, 346, 497], SW = 278, SH = 107;
+const TW = 1280, TH = 628;
+const BANKS = [[38, 0, 248, 624], [358, 0, 248, 624], [678, 0, 248, 624], [998, 0, 248, 624]];
+const THEMES = ["mpc-red", "amber", "cyan", "lime", "violet", "mono", "acidbox", "acidbox-midnight"];
+// Accent colour of each kit theme, copied from THEMES in tools/make_ui_kit.py (ARGB).
+const THEME_ACCENT = { "mpc-red": "ffd31145", "amber": "ffffa21a", "cyan": "ff19c6e0", "lime": "ff8fd21f", "violet": "ff9b63ff", "mono": "ffe4e4e6", "acidbox": "ffd93a25", "acidbox-midnight": "ffff5b40" };
+const MAX_PAGES = 32, MAX_SLOTS = 16, MAX_SWITCH = 4, MAX_NAME = 8, MAX_LABEL = 24;
+// Group outline: the label band and padding the Group button leaves around its controls (as gen_ui.py limits).
+const GROUP_LABEL_MAX = 40, GRP_PAD = 14, GRP_TOP = 36;
+const DRAFT_KEY = "mpc-ui-editor-draft";
+// True while the user is typing (a text box, dropdown, or an in-place label), so shortcuts leave the keys alone.
+const isTyping = () => /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) || document.activeElement.isContentEditable;
+
+// State. A slot is null (blank), {widget:"empty"}, {widget:"text", text}, or
+// {param, widget, overlay, polarity?, visibleWhen?}.
+let params = [], byName = {};
+let doc = { pages: [newPage("1")], kit: null, extra: {} };
+let cur = 0, sel = null, search = "", dragPayload = null, loadNotes = [];
+let fileNames = { params: "", ui: "" };   // names of the files the layout came from
+let artSel = -1;                          // index of the selected picture on this page, or -1
+let multi = new Set();                    // every selected slot; sel is the last one clicked (sel is in multi when set)
+let grpSel = -1, grpPage = -1;            // the selected group outline, and the page it is on
+let kitArt = null, artOn = false;         // kit artwork {source, theme, accent, assets, urlFor}; not saved
+
+const $ = id => document.getElementById(id);
+function el(tag, cls) { const d = document.createElement(tag); if (cls) d.className = cls; return d; }
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+function status(msg, isErr) { const s = $("status"); s.textContent = msg; s.style.color = isErr ? "var(--err)" : "var(--muted)"; }
+function pos(d, x, y, w, h, W, H) {
+  d.style.left = (x / W * 100) + "%"; d.style.top = (y / H * 100) + "%";
+  d.style.width = (w / W * 100) + "%"; d.style.height = (h / H * 100) + "%";
+}
+function newPage(name) { return { name, slots: Array(MAX_SLOTS).fill(null), background: null, bgTile: false, bgScale: 100, art: [], groups: [] }; }
+// Scale for tiling: a whole percentage of the picture's own size.
+const clampScale = v => clampN(Math.round(Number(v) || 100), 1, 400);
+let assetSizes = {};   // file name -> {w, h} of each loaded picture
+// Pictures are {image, x, y, w, h} in tab pixels. assetFiles maps a file name to a preview URL
+// for the project's assets/ folder; it is not saved, so reload the folder after a reload.
+let assetFiles = {};
+function qlink(i) { return 13 + (i & 3) - 4 * (i >> 2); }   // same as gen_ui.slot_qlink
+function bankOf(i) { return (i & 3) + 1; }
+// Only bool and choice are discrete. Everything else (float, int, ...) is continuous, as in gen_ui.py.
+function isDiscrete(p) { return !!p && (p.kind === "bool" || p.kind === "choice"); }
+function kindLabel(p) {
+  if (p.kind === "bool") return "on/off";
+  if (isDiscrete(p)) return p.choices.length + " choices";
+  return "continuous";
+}
+function defaultWidget(p) { if (!isDiscrete(p)) return "knob"; return p.choices.length <= MAX_SWITCH ? "switch" : "slider"; }
+function swap(a, i, j) { [a[i], a[j]] = [a[j], a[i]]; }
+
+// ---------- remembered files (Chromium: file handles kept in IndexedDB) ----------
+const DB_NAME = "mpc-ui-editor", STORE = "handles";
+const PICK_TYPES = [{ description: "JSON", accept: { "application/json": [".json"] } }];
+function idbOpen() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(DB_NAME, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbPut(key, val) {
+  const db = await idbOpen();
+  await new Promise((res, rej) => { const t = db.transaction(STORE, "readwrite"); t.objectStore(STORE).put(val, key); t.oncomplete = res; t.onerror = () => rej(t.error); });
+  db.close();
+}
+async function idbGet(key) {
+  const db = await idbOpen();
+  const v = await new Promise((res, rej) => { const q = db.transaction(STORE).objectStore(STORE).get(key); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+  db.close();
+  return v;
+}
+// Reads a file's text into the editor. kind is "params" or "ui".
+async function ingest(kind, text, name) {
+  try {
+    if (kind === "params") {
+      params = parseParams(text);
+      byName = {}; params.forEach(p => { byName[p.name] = p; });
+      fileNames.params = name;
+      status(`Loaded ${params.length} parameters from ${name}`);
+    } else {
+      doc = parseUi(text); cur = 0; sel = null;
+      fileNames.ui = name;
+      status(loadNotes.length ? `Opened ${name} with ${loadNotes.length} note(s); see Checks.` : `Opened ${name}`);
+    }
+  } catch (err) { status(`${name}: ${err.message}`, true); return false; }
+  // Art from the repo's ui-kit/ folder follows the layout's kit theme.
+  if (kind === "ui" && kitArt && /^\.\.\/ui-kit\//.test(kitArt.source)) {
+    const theme = (doc.kit && doc.kit.theme) || "mpc-red";
+    if (kitArt.theme !== theme) { try { await loadKitArtFromUrl("../ui-kit/" + theme + "/"); } catch (e) { /* not rendered: the Kit panel says so */ } }
+  }
+  renderAll();
+  return true;
+}
+// Opens a file with the browser's picker, remembering it so a reload can re-read it.
+// Each button remembers the last file it used, so its picker opens in that folder.
+// showOpenFilePicker and showSaveFilePicker accept a file handle as startIn.
+async function lastLocation(key) { try { return (await idbGet("last:" + key)) || undefined; } catch (e) { return undefined; } }
+async function rememberLocation(key, handle) { try { await idbPut("last:" + key, handle); } catch (e) { /* storage blocked: the picker just starts in the default folder */ } }
+async function openKind(kind) {
+  if (window.showOpenFilePicker) {
+    try {
+      const key = kind + "-open";
+      const [h] = await showOpenFilePicker({ types: PICK_TYPES, startIn: await lastLocation(key) });
+      await rememberLocation(key, h);
+      await idbPut(kind, h);
+      await ingest(kind, await (await h.getFile()).text(), h.name);
+      await refreshReopen();
+    } catch (e) { if (e.name !== "AbortError") status(e.message, true); }
+    return;
+  }
+  $(kind === "params" ? "fParams" : "fUi").click();   // no picker: plain file input
+}
+async function reopenFromDisk() {
+  for (const kind of ["params", "ui"]) {
+    let h = null;
+    try { h = await idbGet(kind); } catch (e) { h = null; }
+    if (!h) continue;
+    try {
+      if ((await h.requestPermission({ mode: "read" })) !== "granted") { status(`Permission to read ${h.name} was not granted.`, true); continue; }
+      await ingest(kind, await (await h.getFile()).text(), h.name);
+    } catch (e) { status(`Could not reopen ${h.name}: ${e.message}`, true); }
+  }
+  await refreshReopen();
+}
+async function refreshReopen() {
+  let any = false;
+  if (window.showOpenFilePicker) {
+    for (const k of ["params", "ui"]) { try { if (await idbGet(k)) any = true; } catch (e) { /* no storage */ } }
+  }
+  $("bReopen").hidden = !any;
+}
+
+// ---------- assets folder (Chromium/Edge: a writable folder handle, kept in IndexedDB) ----------
+// Pictures dropped on the screen are copied into this folder, and the layout uses the copy's name.
+let assetsDir = null;   // FileSystemDirectoryHandle of the project's assets/ folder, or null
+function sameBytes(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+// Returns the file name the copy has in the assets folder. An identical file already there is reused;
+// a different file with the same name gets -2, -3 ... added before the extension.
+async function copyIntoAssets(file) {
+  if ((await assetsDir.queryPermission({ mode: "readwrite" })) !== "granted" &&
+      (await assetsDir.requestPermission({ mode: "readwrite" })) !== "granted")
+    throw new Error("permission to write to the assets folder was not granted");
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const dot = file.name.lastIndexOf("."), stem = dot > 0 ? file.name.slice(0, dot) : file.name, ext = dot > 0 ? file.name.slice(dot) : "";
+  for (let n = 0; n < 1000; n++) {
+    const name = n === 0 ? file.name : `${stem}-${n + 1}${ext}`;
+    let existing = null;
+    try { existing = await assetsDir.getFileHandle(name); } catch (e) { existing = null; }
+    if (existing) {
+      if (sameBytes(new Uint8Array(await (await existing.getFile()).arrayBuffer()), bytes)) return name;
+      continue;
+    }
+    const fh = await assetsDir.getFileHandle(name, { create: true });
+    const w = await fh.createWritable();
+    await w.write(bytes);
+    await w.close();
+    return name;
+  }
+  throw new Error("no free file name in the assets folder");
+}
+// Reads the pictures in a folder into the preview (names, previews and sizes).
+async function loadAssetsFrom(dir) {
+  const map = {};
+  for await (const entry of dir.values()) {
+    if (entry.kind === "file" && /\.(png|jpe?g)$/i.test(entry.name)) map[entry.name] = URL.createObjectURL(await entry.getFile());
+  }
+  Object.values(assetFiles).forEach(u => URL.revokeObjectURL(u));
+  assetFiles = map;
+  assetsDir = dir;
+  assetSizes = Object.fromEntries(await Promise.all(Object.entries(map).map(async ([n, u]) => [n, await imageSize(u)])));
+  renderAll();
+}
+async function chooseAssetsFolder() {
+  try {
+    const dir = await showDirectoryPicker({ mode: "readwrite" });
+    await idbPut("assets", dir);
+    await loadAssetsFrom(dir);
+    status(`Assets folder: ${dir.name}. Pictures you drop on the screen will be copied here.`);
+  } catch (e) { if (e.name !== "AbortError") status("Assets folder: " + e.message, true); }
+}
+// On start-up, reconnect the folder chosen last time (the permission is asked again when it is needed).
+async function restoreAssetsFolder() {
+  if (!window.showDirectoryPicker) return;
+  try {
+    const dir = await idbGet("assets");
+    if (dir && (await dir.queryPermission({ mode: "readwrite" })) === "granted") await loadAssetsFrom(dir);
+    else if (dir) assetsDir = dir;   // known folder; write permission is requested on the next drop
+  } catch (e) { /* no storage: the folder can be chosen again */ }
+}
+
+// ---------- loading ----------
+function parseParams(text) {
+  const d = JSON.parse(text);
+  if (!d || !Array.isArray(d.params)) throw new Error('expected an object with a "params" array (as written by host_sim dump)');
+  return d.params.map((p, i) => {
+    let kind = p.kind || "float", choices = null;
+    if (kind === "bool") choices = ["Off", "On"];
+    else if (kind === "choice") choices = (p.choices || []).map(String);
+    if (kind === "choice" && (!choices || !choices.length)) kind = "float";
+    return { index: p.index ?? i, name: String(p.name), kind, choices, default: p.default, display: p.display || "", automatable: p.automatable !== false };
+  });
+}
+
+function fromJson(c, pi) {
+  if (typeof c === "string") {
+    if (c.trim().toLowerCase() === "empty" && !byName[c]) return { widget: "empty" };
+    return { param: c, widget: "slider", overlay: "knob" };   // gen_ui: a bare name is a slider
+  }
+  if (!c || typeof c !== "object") { loadNotes.push(`Page ${pi + 1}: a control was not understood and was left blank.`); return null; }
+  const w = c.widget || "slider";
+  if (w === "empty") return { widget: "empty" };
+  if (w === "text") return { widget: "text", text: String(c.text ?? "") };
+  if (!c.param) { loadNotes.push(`Page ${pi + 1}: a control had no "param" and was left blank.`); return null; }
+  const s = { param: String(c.param), widget: w, overlay: c.overlay || (w === "switch" ? "menu" : "knob") };
+  if (w === "plotter") { delete s.overlay; s.min = c.min ?? 0; s.max = c.max ?? 1; }
+  if (c.polarity && c.polarity !== "auto" && (w === "knob" || w === "fader")) s.polarity = c.polarity;
+  if (typeof c.label === "string") s.label = c.label.trim();   // "" means the name is hidden
+  if (c.visibleWhen) {
+    const v = c.visibleWhen, vp = byName[v.param];
+    let ch = v.choice;
+    if (ch === undefined && typeof v.index === "number" && vp && vp.choices) ch = vp.choices[v.index];
+    if (ch !== undefined) s.visibleWhen = { param: String(v.param), choice: String(ch) };
+  }
+  return s;
+}
+
+function parseUi(text) {
+  const d = JSON.parse(text);
+  if (!d || !Array.isArray(d.pages)) throw new Error('expected an object with a "pages" array');
+  loadNotes = [];
+  const pages = d.pages.map((pg, pi) => {
+    const page = newPage(String((pg && pg.name) ?? (pi + 1)));
+    page.background = pg && typeof pg.background === "string" && pg.background ? pg.background : null;
+    page.bgTile = !!(pg && pg.backgroundTile);
+    page.bgScale = clampScale(pg && pg.backgroundScale);
+    page.art = pg && Array.isArray(pg.art) ? pg.art.map(a => ({ image: String((a && a.image) || ""), x: +a.x || 0, y: +a.y || 0, w: +a.w || 1, h: +a.h || 1, tile: !!(a && a.tile), scale: clampScale(a && a.scale) })) : [];
+    page.groups = pg && Array.isArray(pg.groups) ? pg.groups.map(g => ({ x: +g.x || 0, y: +g.y || 0, w: +g.w || 1, h: +g.h || 1, label: String((g && g.label) || "") })) : [];
+    const ctls = pg && Array.isArray(pg.controls) ? pg.controls : [];
+    if (ctls.length > MAX_SLOTS) loadNotes.push(`Page ${pi + 1} had ${ctls.length} controls; only the first ${MAX_SLOTS} were kept.`);
+    ctls.slice(0, MAX_SLOTS).forEach((c, i) => { page.slots[i] = fromJson(c, pi); });
+    return page;
+  });
+  let kit = null;
+  if (typeof d.kit === "string") kit = { theme: d.kit };
+  else if (d.kit && typeof d.kit === "object") kit = { ...d.kit };
+  const extra = {};
+  Object.keys(d).forEach(k => { if (k !== "pages" && k !== "kit") extra[k] = d[k]; });
+  return { pages: pages.length ? pages : [newPage("1")], kit, extra };
+}
+
+// ---------- export ----------
+function toJson(s) {
+  if (!s || s.widget === "empty") return { widget: "empty" };
+  if (s.widget === "text") return { widget: "text", text: s.text };
+  const o = { param: s.param, widget: s.widget };
+  if (s.visibleWhen) o.visibleWhen = { param: s.visibleWhen.param, choice: s.visibleWhen.choice };
+  if (s.label !== undefined && s.widget !== "slider") o.label = s.label;   // "" hides the name; the slider bar draws its own
+  if (s.widget === "plotter") { o.min = s.min; o.max = s.max; return o; }   // no overlay, no Q-Link
+  o.overlay = s.overlay || (s.widget === "switch" ? "menu" : "knob");
+  if (s.polarity && s.polarity !== "auto" && (s.widget === "knob" || s.widget === "fader")) o.polarity = s.polarity;
+  return o;
+}
+
+function exportUi() {
+  const out = { pages: doc.pages.map(pg => {
+    let last = -1;
+    pg.slots.forEach((s, i) => { if (s) last = i; });
+    const controls = [];
+    for (let i = 0; i <= last; i++) controls.push(toJson(pg.slots[i]));   // gaps become "empty"
+    const o = { name: pg.name, controls };
+    if (pg.background) {
+      o.background = pg.background;
+      if (pg.bgTile) { o.backgroundTile = true; o.backgroundScale = pg.bgScale; }
+    }
+    if (pg.groups.length) o.groups = pg.groups.map(g => ({ x: g.x, y: g.y, w: g.w, h: g.h, ...(g.label ? { label: g.label } : {}) }));
+    if (pg.art.length) o.art = pg.art.map(a => a.tile
+      ? { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h, tile: true, scale: a.scale }
+      : { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h });
+    return o;
+  }) };
+  if (doc.kit && (doc.kit.theme || doc.kit.accent)) out.kit = doc.kit;
+  Object.assign(out, doc.extra);
+  return out;
+}
+
+async function saveUi() {
+  const errs = allProblems().filter(p => p.err).length;
+  if (errs && !confirm(`There are ${errs} problem(s) that the generator will reject. Save anyway?`)) return;
+  const text = JSON.stringify(exportUi(), null, 2) + "\n";
+  let remembered = null;
+  if (window.showOpenFilePicker) { try { remembered = await idbGet("ui"); } catch (e) { remembered = null; } }
+  if (remembered) {
+    try {
+      if ((await remembered.queryPermission({ mode: "readwrite" })) !== "granted" &&
+          (await remembered.requestPermission({ mode: "readwrite" })) !== "granted") { status(`No permission to write ${remembered.name}.`, true); return; }
+      const w = await remembered.createWritable();
+      await w.write(text);
+      await w.close();
+      fileNames.ui = remembered.name;
+      await rememberLocation("save", remembered);
+      status("Saved " + remembered.name);
+      renderAll();
+      return;
+    } catch (e) { status("Save failed: " + e.message, true); return; }
+  }
+  if (window.showSaveFilePicker) {
+    try {
+      const h = await showSaveFilePicker({ suggestedName: "ui.json", startIn: await lastLocation("save"),
+        types: [{ description: "ui.json", accept: { "application/json": [".json"] } }] });
+      const w = await h.createWritable();
+      await w.write(text);
+      await w.close();
+      await rememberLocation("save", h);
+      await idbPut("ui", h);
+      fileNames.ui = h.name;
+      status("Saved " + h.name);
+      renderAll();
+      return;
+    } catch (e) {
+      if (e && e.name === "AbortError") return;   // user cancelled; otherwise fall back to download
+    }
+  }
+  const a = el("a");
+  a.href = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+  a.download = "ui.json";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  status("Downloaded ui.json. Move it to plugins/AcidBox/ui.json.");
+}
+
+// ---------- checks ----------
+function slotProblems(s) {
+  const out = { err: [], warn: [] };
+  if (!s) return out;
+  const loaded = params.length > 0;
+  if (s.widget === "text" && !String(s.text || "").trim()) out.err.push("Heading text is empty");
+  if (s.param && loaded && !byName[s.param]) out.err.push(`"${s.param}" is not in params.json`);
+  const p = byName[s.param];
+  if (s.widget === "plotter" && p) {
+    if (isDiscrete(p)) out.err.push("A plotter draws a continuous value; use a switch for this parameter");
+    if (!(s.max > s.min)) out.err.push("Plotter range: max must be larger than min");
+    if (p.automatable === false) { /* display-only: the intended kind */ } else if (loaded) out.warn.push("This parameter is automatable; a plotter should use a display-only parameter (automatable = false)");
+  }
+  if (s.widget === "switch" && p) {
+    if (!isDiscrete(p)) out.err.push("A switch needs a bool or choice parameter; use a knob or fader");
+    else if (p.choices.length > MAX_SWITCH) out.err.push(`A switch fits at most ${MAX_SWITCH} choices; use a slider with overlay menu`);
+  }
+  if (s.visibleWhen && loaded) {
+    const vp = byName[s.visibleWhen.param];
+    if (!vp) out.err.push(`Show-when parameter "${s.visibleWhen.param}" is not in params.json`);
+    else if (!isDiscrete(vp)) out.err.push(`Show-when parameter "${vp.name}" must be a choice or bool`);
+    else if (!vp.choices.includes(s.visibleWhen.choice)) out.err.push(`"${vp.name}" has no choice "${s.visibleWhen.choice}"`);
+  }
+  return out;
+}
+
+function allProblems() {
+  const list = [];
+  if (doc.pages.length > MAX_PAGES) list.push({ err: true, msg: `${doc.pages.length} pages; the MPC supports at most ${MAX_PAGES}` });
+  doc.pages.forEach((pg, pi) => {
+    const where = `Page ${pi + 1} "${pg.name}"`;
+    if (!pg.name.trim()) list.push({ err: true, msg: `${where}: name is empty` });
+    else if (pg.name.length > MAX_NAME) list.push({ warn: true, msg: `${where}: names longer than 8 characters may be cut off on the tab` });
+    pg.slots.forEach((s, i) => {
+      const pr = slotProblems(s);
+      pr.err.forEach(m => list.push({ err: true, msg: `${where}, slot ${i + 1}: ${m}` }));
+      pr.warn.forEach(m => list.push({ warn: true, msg: `${where}, slot ${i + 1}: ${m}` }));
+    });
+    if (pg.bgTile && !(pg.bgScale >= 1 && pg.bgScale <= 400)) list.push({ err: true, msg: `${where}, background: tile scale must be 1 to 400 %` });
+    pg.art.forEach((a, ai) => {
+      if (a.tile && !(a.scale >= 1 && a.scale <= 400)) list.push({ err: true, msg: `${where}, picture ${ai + 1}: tile scale must be 1 to 400 %` });
+    });
+    pg.groups.forEach((g, gi) => {
+      const gw = `${where}, group ${gi + 1}`;
+      if (g.x < 0 || g.y < 0 || g.w < 1 || g.h < 1 || g.x + g.w > TW || g.y + g.h > TH) list.push({ err: true, msg: `${gw}: must lie inside the 1280 x 628 area` });
+      if ((g.label || "").length > GROUP_LABEL_MAX) list.push({ err: true, msg: `${gw}: label is longer than ${GROUP_LABEL_MAX} characters` });
+    });
+    const pics = (pg.background ? [{ image: pg.background, x: 0, y: 0, w: TW, h: TH }] : []).concat(pg.art);
+    pics.forEach((a, ai) => {
+      const what = pg.background && ai === 0 ? "background" : `picture ${ai - (pg.background ? 1 : 0) + 1}`;
+      if (!/\.(png|jpe?g)$/i.test(a.image) || /[\/\\]/.test(a.image)) list.push({ err: true, msg: `${where}, ${what}: needs a PNG or JPEG file name from assets/, got "${a.image}"` });
+      else if (Object.keys(assetFiles).length && !assetFiles[a.image]) list.push({ warn: true, msg: `${where}, ${what}: "${a.image}" is not in the loaded assets folder` });
+      if (ai > 0 || !pg.background) {
+        if (a.x < 0 || a.y < 0 || a.w < 1 || a.h < 1 || a.x + a.w > TW || a.y + a.h > TH) list.push({ err: true, msg: `${where}, ${what}: must lie inside the 1280 x 628 area` });
+      }
+    });
+  });
+  loadNotes.forEach(m => list.push({ warn: true, msg: m }));
+  return list;
+}
+
+function usage() {
+  const m = {};
+  doc.pages.forEach((pg, pi) => pg.slots.forEach(s => { if (s && s.param) (m[s.param] = m[s.param] || []).push(pi); }));
+  return m;
+}
+
+// ---------- editing ----------
+function makeSlot(name, p) {
+  const w = defaultWidget(p);
+  return { param: name, widget: w, overlay: (w === "switch" || isDiscrete(p)) ? "menu" : "knob" };
+}
+function makeFromItem(item) {
+  if (item.special === "text") return { widget: "text", text: "HEADING" };
+  if (item.special === "empty") return { widget: "empty" };
+  return makeSlot(item.param, byName[item.param]);
+}
+function dropOn(i) {
+  const pl = dragPayload; dragPayload = null;
+  if (!pl) return;
+  if (pl.froms) {
+    // Several controls dropped on a slot of their own page move as a block, keeping their shape.
+    if (pl.page === cur) moveBlock(pl.froms, i);
+    else status("Drop the selection on a page tab or page row to move it to another page.", true);
+    return;
+  }
+  const pg = doc.pages[cur];
+  if (pl.from !== undefined) {
+    if (pl.from !== i) swap(pg.slots, pl.from, i);
+  } else {
+    pg.slots[i] = makeFromItem(pl.item);
+  }
+  sel = i;
+  renderAll();
+}
+// Drop on another page (its row in the Pages panel, or its tab in device view): a slot moves there,
+// and a parameter from the list is added. The control takes the page's first blank slot.
+function dropOnPage(t) {
+  const pl = dragPayload; dragPayload = null;
+  if (!pl || t < 0 || t >= doc.pages.length) return;
+  const target = doc.pages[t];
+  if (pl.froms) {
+    // A selection moves as a block: every control needs its own blank slot on the target page, or none moves.
+    if (pl.page === t) return;
+    const src = doc.pages[pl.page];
+    const from = pl.froms.filter(i => src.slots[i]);
+    const blanks = target.slots.map((s, k) => s ? -1 : k).filter(k => k >= 0);
+    if (from.length > blanks.length) { status(`Page ${t + 1} has ${blanks.length} blank slot${blanks.length === 1 ? "" : "s"}; the selection has ${from.length}. Clear some first.`, true); return; }
+    from.forEach((i, n) => { target.slots[blanks[n]] = src.slots[i]; src.slots[i] = null; });
+    status(`Moved ${from.length} control${from.length === 1 ? "" : "s"} to page ${t + 1}.`);
+    sel = null;
+    renderAll();
+    return;
+  }
+  const j = target.slots.indexOf(null);
+  if (pl.from !== undefined) {
+    if (pl.page === t) return;   // same page: nothing to move
+    const src = doc.pages[pl.page], s = src && src.slots[pl.from];
+    if (!s) return;
+    if (j < 0) { status(`Page ${t + 1} has no blank slot. Clear one first.`, true); return; }
+    target.slots[j] = s; src.slots[pl.from] = null;
+    status(`Moved ${s.label || s.param || "the slot"} to page ${t + 1}, slot ${j + 1}.`);
+  } else {
+    if (j < 0) { status(`Page ${t + 1} has no blank slot. Clear one first.`, true); return; }
+    target.slots[j] = makeFromItem(pl.item);
+    status(`Added ${pl.item.label} to page ${t + 1}, slot ${j + 1}.`);
+  }
+  sel = null;
+  renderAll();
+}
+// Moves a block of controls on this page so its top-left control lands on slot `to`.
+// The block keeps its shape. It is refused if it would leave the 4 x 4 grid or land on a control outside it.
+function moveBlock(froms, to) {
+  const pg = doc.pages[cur];
+  const cells = froms.map(i => ({ i, r: i >> 2, c: i & 3, s: pg.slots[i] })).filter(x => x.s);
+  if (!cells.length) return;
+  const r0 = Math.min(...cells.map(x => x.r)), c0 = Math.min(...cells.map(x => x.c));
+  const dr = (to >> 2) - r0, dc = (to & 3) - c0;
+  const dest = cells.map(x => ({ ...x, j: (x.r + dr) * 4 + (x.c + dc), nr: x.r + dr, nc: x.c + dc }));
+  if (dest.some(d => d.nr < 0 || d.nr > 3 || d.nc < 0 || d.nc > 3)) { status("That would move the selection off the screen. Pick a slot further in.", true); return; }
+  const mine = new Set(cells.map(x => x.i));
+  const taken = dest.find(d => pg.slots[d.j] && !mine.has(d.j));
+  if (taken) { status(`Slot ${taken.j + 1} holds a control outside the selection. Clear it first.`, true); return; }
+  cells.forEach(x => { pg.slots[x.i] = null; });
+  dest.forEach(d => { pg.slots[d.j] = d.s; });
+  multi = new Set(dest.map(d => d.j));
+  sel = dest[dest.length - 1].j;
+  status(`Moved ${cells.length} control${cells.length === 1 ? "" : "s"}.`);
+  renderAll();
+}
+function placeFirstBlank(item) {
+  const pg = doc.pages[cur], i = pg.slots.indexOf(null);
+  if (i < 0) { status("No blank slot on this page. Clear one first.", true); return; }
+  pg.slots[i] = makeFromItem(item); sel = i; renderAll();
+}
+
+// ---------- undo and redo ----------
+// Every change ends in renderAll(), so the history holds the layout as it was at the last render.
+// A step is recorded only when the layout differs, so one drag or one committed edit is one step.
+const HIST_MAX = 200;
+let undoStack = [], redoStack = [], histLast = null;   // histLast: JSON of doc at the last render
+function trackHistory() {
+  const now = JSON.stringify(doc);
+  if (histLast === null) { histLast = now; return; }
+  if (now === histLast) return;
+  undoStack.push(histLast);
+  if (undoStack.length > HIST_MAX) undoStack.shift();
+  redoStack = [];
+  histLast = now;
+}
+function restoreDoc(json) {
+  doc = JSON.parse(json); histLast = json;
+  cur = Math.min(cur, doc.pages.length - 1); artSel = -1;
+  renderAll();
+}
+function undo() {
+  trackHistory();
+  if (!undoStack.length) { status("Nothing to undo"); return; }
+  redoStack.push(histLast);
+  restoreDoc(undoStack.pop());
+  status("Undone");
+}
+function redo() {
+  trackHistory();
+  if (!redoStack.length) { status("Nothing to redo"); return; }
+  undoStack.push(histLast);
+  restoreDoc(redoStack.pop());
+  status("Redone");
+}
+function updateHistButtons() {
+  $("bUndo").disabled = !undoStack.length;
+  $("bRedo").disabled = !redoStack.length;
+}
+$("bUndo").addEventListener("click", undo);
+$("bRedo").addEventListener("click", redo);
+document.addEventListener("keydown", e => {
+  if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+  if (isTyping()) return;   // text boxes keep their own undo
+  const k = e.key.toLowerCase();
+  if (k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+  else if (k === "y" || (k === "z" && e.shiftKey)) { e.preventDefault(); redo(); }
+});
+
+// ---------- selecting several controls, and groups ----------
+// Shift-click adds a slot to the selection, Ctrl/Cmd-click removes it. Dragging a box on empty screen
+// selects the controls inside it (Shift adds, Ctrl/Cmd removes). Ctrl+G, or Group these, draws an outline.
+let band = null, bandJustEnded = false;
+function bandBox(b, clientX, clientY) {
+  const r = canvasRect();
+  const ax = (b.sx - r.left) / r.width * TW, ay = (b.sy - r.top) / r.height * TH;
+  const bx = (clientX - r.left) / r.width * TW, by = (clientY - r.top) / r.height * TH;
+  return { x0: clampN(Math.min(ax, bx), 0, TW), y0: clampN(Math.min(ay, by), 0, TH),
+           x1: clampN(Math.max(ax, bx), 0, TW), y1: clampN(Math.max(ay, by), 0, TH) };
+}
+$("canvas").addEventListener("pointerdown", e => {
+  if (e.target !== $("canvas")) return;   // only empty screen starts a box; slots, pictures and groups handle their own
+  bandJustEnded = false;
+  band = { sx: e.clientX, sy: e.clientY, moved: false, add: e.shiftKey, rem: e.ctrlKey || e.metaKey, el: el("div", "band") };
+  $("canvas").appendChild(band.el);
+  try { $("canvas").setPointerCapture(e.pointerId); } catch (err) { /* synthetic events: no active pointer */ }
+});
+$("canvas").addEventListener("pointermove", e => {
+  if (!band) return;
+  if (!band.moved && Math.hypot(e.clientX - band.sx, e.clientY - band.sy) < 4) return;   // a click, not a drag
+  band.moved = true;
+  const q = bandBox(band, e.clientX, e.clientY);
+  pos(band.el, q.x0, q.y0, q.x1 - q.x0, q.y1 - q.y0, TW, TH);
+});
+function endBand(e) {
+  const b = band; if (!b) return;
+  band = null; b.el.remove();
+  if (!b.moved || e.type === "pointercancel") return;
+  const q = bandBox(b, e.clientX, e.clientY), pg = doc.pages[cur], hit = new Set();
+  pg.slots.forEach((s, i) => {
+    if (!s) return;   // blank slots are not selected
+    const x = SLOT_X[i & 3], y = SLOT_Y[i >> 2];
+    if (x < q.x1 && x + SW > q.x0 && y < q.y1 && y + SH > q.y0) hit.add(i);
+  });
+  const next = b.add ? new Set([...multi, ...hit]) : b.rem ? new Set([...multi].filter(i => !hit.has(i))) : hit;
+  multi = next;
+  sel = next.size ? [...next][next.size - 1] : null;
+  artSel = -1; grpSel = -1;
+  bandJustEnded = true;   // the click that follows the drag must not clear the new selection
+  renderAll();
+}
+$("canvas").addEventListener("pointerup", endBand);
+$("canvas").addEventListener("pointercancel", endBand);
+
+// Outline around the selected slots, with padding and a label band above them.
+function makeGroup() {
+  const pg = doc.pages[cur];
+  if (!multi.size) return;
+  const cells = [...multi].map(i => ({ x: SLOT_X[i & 3], y: SLOT_Y[i >> 2] }));
+  const minX = Math.min(...cells.map(c => c.x)), minY = Math.min(...cells.map(c => c.y));
+  const maxX = Math.max(...cells.map(c => c.x + SW)), maxY = Math.max(...cells.map(c => c.y + SH));
+  // Try the normal padding first, then tighter ones, and use the first outline that does not cross another group's outline.
+  let box = null;
+  for (const [pad, top] of [[GRP_PAD, GRP_TOP], [8, 28], [4, 20], [2, 14]]) {
+    const x = Math.max(0, minX - pad), y = Math.max(0, minY - top);
+    const cand = { x, y, w: Math.min(TW, maxX + pad) - x, h: Math.min(TH, maxY + pad) - y };
+    if (!pg.groups.some(g => outlinesCross(cand, g))) { box = cand; break; }
+  }
+  if (!box) { status("A new outline here would cross another group's outline. Move or resize that group first.", true); return; }
+  pg.groups.push({ ...box, label: "" });
+  status("Outline added. Double-click its label, or type one in the Inspector.");
+  grpSel = pg.groups.length - 1; grpPage = cur;
+  sel = null; artSel = -1;
+  renderAll();
+  const li = document.querySelector('#inspector input[data-f="glabel"]');
+  if (li) li.focus();
+}
+// True when two outlines cross: they overlap, and neither lies entirely inside the other.
+// Touching edges and nesting are allowed.
+function outlinesCross(a, b) {
+  const overlap = a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  if (!overlap) return false;
+  const aInB = a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+  const bInA = b.x >= a.x && b.y >= a.y && b.x + b.w <= a.x + a.w && b.y + b.h <= a.y + a.h;
+  return !(aInB || bInA);
+}
+function deleteGroup(i) {
+  doc.pages[cur].groups.splice(i, 1);
+  grpSel = -1;
+  renderAll();
+}
+// Which sides of a group the pointer is on, from its position on screen. The edge band is 10 px deep.
+const EDGE_PX = 10;
+function edgeSides(a, clientX, clientY) {
+  const r = canvasRect();
+  const tx = (clientX - r.left) / r.width * TW - a.x, ty = (clientY - r.top) / r.height * TH - a.y;
+  return { l: tx < EDGE_PX, r: tx > a.w - EDGE_PX, t: ty < EDGE_PX, b: ty > a.h - EDGE_PX };
+}
+function sidesCursor(s) {
+  const h = s.l || s.r, v = s.t || s.b;
+  if (h && v) return (s.l === s.t) ? "nwse-resize" : "nesw-resize";
+  if (h) return "ew-resize";
+  if (v) return "ns-resize";
+  return "move";
+}
+// Hovering an outline's edge shows which way it will stretch.
+$("canvas").addEventListener("pointermove", e => {
+  if (artDrag || band) return;
+  const hit = e.target.closest && e.target.closest(".grp-hit");
+  if (!hit) return;
+  const g = doc.pages[cur].groups[+hit.parentElement.dataset.grp];
+  if (g) hit.style.cursor = sidesCursor(edgeSides(g, e.clientX, e.clientY));
+});
+// Puts a group's outline, its label and its corner grip where the group's numbers say.
+function placeGroupEl(d, g) {
+  pos(d, g.x, g.y, g.w, g.h, TW, TH);
+  const lb = d.querySelector(".grp-lbl"); if (lb) pos(lb, 18, 6, g.w - 36, 26, g.w, g.h);
+  const gr = d.querySelector(".pic-grip"); if (gr) pos(gr, g.w - 14, g.h - 14, 14, 14, g.w, g.h);
+}
+// Shows the selected group's numbers in the Inspector. The field being typed in is left alone.
+function syncGroupFields() {
+  const g = doc.pages[cur].groups[grpSel]; if (!g) return;
+  const vals = { gx: g.x, gy: g.y, gw: g.w, gh: g.h };
+  for (const f in vals) {
+    const inp = document.querySelector(`#inspector input[data-f="${f}"]`);
+    if (inp && inp !== document.activeElement) inp.value = vals[f];
+  }
+}
+function setGroupBox(g, k, v) {
+  if (k === "x") g.x = clampN(v, 0, TW - 1);
+  else if (k === "y") g.y = clampN(v, 0, TH - 1);
+  else if (k === "w") g.w = clampN(v, 8, TW - g.x);
+  else g.h = clampN(v, 8, TH - g.y);
+}
+document.addEventListener("keydown", e => {
+  if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "g" && multi.size && !isTyping()) {
+    e.preventDefault(); makeGroup();
+  }
+});
+document.addEventListener("keydown", e => {
+  if ((e.key === "Delete" || e.key === "Backspace") && grpSel >= 0 && !isTyping()) deleteGroup(grpSel);
+});
+
+// ---------- rendering ----------
+// Selection: the last slot clicked (sel) is always in the multi-selection, and a cleared sel clears it all.
+function syncSelection() {
+  if (sel === null) multi.clear(); else if (!multi.has(sel)) multi = new Set([sel]);
+  if (grpSel >= 0 && (grpPage !== cur || !doc.pages[cur].groups[grpSel])) grpSel = -1;
+}
+// Shows a new selection without re-drawing the screen. A click must not replace the label it lands on:
+// the browser would not see the second click of a double-click, and a double-click edits the label.
+function paintSelection() {
+  syncSelection();
+  const pg = doc.pages[cur];
+  document.querySelectorAll("#canvas .slot").forEach((d, i) => d.classList.toggle("sel", multi.has(i)));
+  document.querySelectorAll("#canvas .pic.art").forEach(d => d.classList.toggle("sel", +d.dataset.art === artSel));
+  document.querySelectorAll("#canvas .grp").forEach(d => {
+    const gi = +d.dataset.grp, g = pg.groups[gi], on = gi === grpSel;
+    d.classList.toggle("sel", on);
+    let gr = d.querySelector(".pic-grip");
+    if (on && !gr) { gr = el("div", "pic-grip"); gr.dataset.grip = gi; d.appendChild(gr); pos(gr, g.w - 14, g.h - 14, 14, 14, g.w, g.h); }
+    if (!on && gr) gr.remove();
+  });
+  renderInspector();
+}
+
+function renderAll() {
+  trackHistory(); updateHistButtons();
+  syncSelection();
+  $("files").textContent = `params: ${fileNames.params || "none"} · ui: ${fileNames.ui || "none"}`;
+  renderPages(); renderPalette(); renderStage(); renderInspector(); renderWarnings(); renderKit(); renderArtwork(); saveDraft();
+}
+
+function renderArtwork() {
+  const pg = doc.pages[cur];
+  $("bgName").value = pg.background || "";
+  $("bgTile").checked = !!pg.bgTile;
+  $("bgScale").value = pg.bgScale;
+  $("bgScale").disabled = !pg.bgTile;
+  $("artList").innerHTML = pg.art.map((a, i) =>
+    `<div class="artRow">
+       <input data-i="${i}" data-f="image" value="${esc(a.image)}" placeholder="logo.png" title="File name in assets/">
+       <input data-i="${i}" data-f="x" type="number" value="${a.x}" title="x (px)">
+       <input data-i="${i}" data-f="y" type="number" value="${a.y}" title="y (px)">
+       <input data-i="${i}" data-f="w" type="number" value="${a.w}" title="width (px)">
+       <input data-i="${i}" data-f="h" type="number" value="${a.h}" title="height (px)">
+       <button data-del="${i}" title="Remove this picture">×</button>
+     </div>
+     <div class="artRow" style="grid-template-columns:auto 70px auto 1fr">
+       <input type="checkbox" data-i="${i}" data-f="tile" ${a.tile ? "checked" : ""} style="width:auto">
+       <span class="note" style="margin:0">tile at</span>
+       <input data-i="${i}" data-f="scale" type="number" min="1" max="400" step="1" value="${a.scale}" ${a.tile ? "" : "disabled"}>
+       <span class="note" style="margin:0">% of picture size</span>
+     </div>`).join("");
+  const n = Object.keys(assetFiles).length;
+  const folder = assetsDir ? `Assets folder: ${assetsDir.name}. Pictures dropped on the screen are copied here automatically.`
+    : window.showDirectoryPicker ? "Choose the project's assets/ folder, and pictures dropped on the screen will be copied into it automatically."
+    : "This browser cannot write to a folder, so copy dropped pictures into assets/ by hand (use Chrome or Edge for automatic copies).";
+  $("assetsNote").textContent = (n ? `${n} picture file${n === 1 ? "" : "s"} loaded. ` : "No pictures loaded yet. ") + folder;
+}
+
+$("bgName").addEventListener("change", e => { doc.pages[cur].background = e.target.value.trim() || null; renderAll(); });
+$("bgTile").addEventListener("change", e => { doc.pages[cur].bgTile = e.target.checked; renderAll(); });
+$("bgScale").addEventListener("change", e => { doc.pages[cur].bgScale = clampScale(e.target.value); renderAll(); });
+$("addArt").addEventListener("click", () => { doc.pages[cur].art.push({ image: "", x: 0, y: 0, w: 200, h: 100 }); renderAll(); });
+$("artList").addEventListener("change", e => {
+  const i = +e.target.dataset.i, f = e.target.dataset.f, a = doc.pages[cur].art[i];
+  if (!a || !f) return;
+  if (f === "tile") a.tile = e.target.checked;
+  else if (f === "scale") a.scale = clampScale(e.target.value);
+  else a[f] = f === "image" ? e.target.value.trim() : Math.round(Number(e.target.value) || 0);
+  renderAll();
+});
+$("artList").addEventListener("click", e => {
+  const b = e.target.closest("button[data-del]"); if (!b) return;
+  doc.pages[cur].art.splice(+b.dataset.del, 1); renderAll();
+});
+$("bAssets").addEventListener("click", () => window.showDirectoryPicker ? chooseAssetsFolder() : $("fAssets").click());
+$("fAssets").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = "";
+  const map = {};
+  files.forEach(f => { if (/\.(png|jpe?g)$/i.test(f.name) && (f.webkitRelativePath || "").split("/").length <= 2) map[f.name] = URL.createObjectURL(f); });
+  Object.values(assetFiles).forEach(u => URL.revokeObjectURL(u));
+  assetFiles = map;
+  status(`Loaded ${Object.keys(map).length} picture file${Object.keys(map).length === 1 ? "" : "s"} from the assets folder.`);
+  renderAll();
+  // Read each picture's own size, which tiling is a percentage of.
+  const entries = await Promise.all(Object.entries(map).map(async ([n, u]) => [n, await imageSize(u)]));
+  assetSizes = Object.fromEntries(entries);
+  renderAll();
+});
+
+function renderPages() {
+  const box = $("pages"); box.innerHTML = "";
+  doc.pages.forEach((pg, i) => {
+    const row = el("div", "page" + (i === cur ? " cur" : ""));
+    row.innerHTML = `<button data-act="sel" data-i="${i}">${i + 1}</button>` +
+      `<input value="${esc(pg.name)}" data-act="name" data-i="${i}">` +
+      `<button data-act="up" data-i="${i}" title="Move up">&uarr;</button>` +
+      `<button data-act="down" data-i="${i}" title="Move down">&darr;</button>` +
+      `<button data-act="del" data-i="${i}" title="Delete page">&times;</button>`;
+    // Drop target: a slot or a parameter dragged from the list goes to this page.
+    row.addEventListener("dragover", e => { if (dragPayload) { e.preventDefault(); row.classList.add("over"); } });
+    row.addEventListener("dragleave", e => { if (!row.contains(e.relatedTarget)) row.classList.remove("over"); });
+    row.addEventListener("drop", e => { e.preventDefault(); row.classList.remove("over"); dropOnPage(i); });
+    box.appendChild(row);
+  });
+  $("pageCount").textContent = `${doc.pages.length} of ${MAX_PAGES} pages`;
+}
+
+function paletteItem(item, cls) {
+  const d = el("div", "item " + (cls || ""));
+  d.draggable = true;
+  d.innerHTML = `<span>${esc(item.label)}</span><small>${esc(item.sub || "")}</small>`;
+  d.addEventListener("dragstart", e => { dragPayload = { item }; e.dataTransfer.setData("text/plain", item.label); });
+  d.addEventListener("dblclick", () => placeFirstBlank(item));
+  return d;
+}
+
+function renderPalette() {
+  const box = $("palette"); box.innerHTML = "";
+  const use = usage(), cs = [
+    { special: "text", label: "Heading text", sub: "text label" },
+    { special: "empty", label: "Spacer", sub: "blank space" }
+  ];
+  cs.forEach(it => box.appendChild(paletteItem({ ...it, label: it.label, sub: it.sub }, "special")));
+  if (!params.length) {
+    const n = el("div", "note"); n.textContent = "No parameters loaded. Click Load params.json."; box.appendChild(n); return;
+  }
+  const q = search.toLowerCase();
+  params.filter(p => p.name.toLowerCase().includes(q)).forEach(p => {
+    const pages = use[p.name] || [];
+    const onThis = pages.includes(cur);
+    const where = pages.length ? (onThis ? "on this page" : "page " + pages.map(i => i + 1).join(", ")) : "";
+    const kind = kindLabel(p);
+    box.appendChild(paletteItem({ param: p.name, label: p.name, sub: kind + (where ? " · " + where : "") }, onThis ? "used" : ""));
+  });
+}
+
+// ---------- kit artwork preview ----------
+// Real film-strip graphics from a rendered kit folder (kit.json + PNGs), drawn at their
+// true size relative to the 1280 x 628 tab area and shown at each control's default value.
+// The device's screen background and fonts are not part of the kit, so they are not drawn.
+const SEG_X = { 2: [15, 141], 3: [15, 99, 183], 4: [15, 77, 139, 201] };   // as tools/gen_ui.py
+const px = n => `calc(var(--s) * ${n}px)`;
+const artPos = (x, y, w, h, extra = "") => `position:absolute;left:${px(x)};top:${px(y)};width:${px(w)};height:${px(h)};${extra}`;
+
+function artImg(a, x, y, frame) {
+  const n = a.frames || 1;
+  return `<div style="${artPos(x, y, a.width, a.height,
+    `background-image:url('${kitArt.urlFor(a.file)}');background-repeat:no-repeat;` +
+    `background-position:0 ${px(-frame * a.height)};background-size:${px(a.width)} ${px(a.height * n)}`)}"></div>`;
+}
+function artText(x, y, w, h, css, t) { return `<div style="${artPos(x, y, w, h, css)}">${esc(t)}</div>`; }
+function artLabel(x, y, w, name, sub) {
+  return artText(x, y, w, 16, `font-size:${px(13)};font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`, name).replace("<div", '<div data-lbl="1"') +
+    (sub ? artText(x, y + 18, w, 14, `font-size:${px(11)};color:#8a8890;white-space:nowrap;overflow:hidden;text-overflow:ellipsis`, sub) : "");
+}
+// Same rule as tools/gen_ui.py: auto draws the centre-zero strip only when the default sits at
+// the centre and reads as zero.
+function bipolarFor(s, p) {
+  if (s.polarity === "bipolar") return true;
+  if (s.polarity === "unipolar") return false;
+  return !isDiscrete(p) && typeof p.default === "number" && Math.abs(p.default - 0.5) <= 0.01 &&
+    /^[+-]?0*(\.0+)?\s*[^0-9.]*$/.test(String(p.display || "").trim());
+}
+// Art HTML for a knob, fader or switch slot, or null when the kit cannot draw it.
+function artHtml(s) {
+  if (!kitArt || !s || !s.param) return null;
+  const p = byName[s.param]; if (!p) return null;
+  const A = kitArt.assets, def = Math.min(1, Math.max(0, Number(p.default) || 0));
+  if (s.widget === "knob") {
+    const a = A[bipolarFor(s, p) ? "knob_bi" : "knob_uni"]; if (!a) return null;
+    return artImg(a, 8, 8, Math.round(def * (a.frames - 1))) + artLabel(106, 8, 160, shownName(s), p.display);
+  }
+  if (s.widget === "fader") {
+    const a = A[bipolarFor(s, p) ? "fader_h_bi" : "fader_h_uni"]; if (!a) return null;
+    return artLabel(8, 4, 262, shownName(s), p.display) + artImg(a, 15, 44, Math.round(def * (a.frames - 1)));
+  }
+  if (s.widget === "switch") {
+    if (p.kind === "bool") {
+      const a = A[def >= 0.5 ? "toggle_on" : "toggle_off"]; if (!a) return null;
+      return artLabel(8, 4, 262, shownName(s), p.display) + artImg(a, 8, 44, 0);
+    }
+    const n = p.choices ? p.choices.length : 0;
+    if (n < 2 || n > 4) return null;
+    const idx = Math.round(def * (n - 1));
+    let html = artLabel(8, 4, 262, shownName(s), p.display);
+    for (let i = 0; i < n; i++) {
+      const on = i === idx, a = A[`seg${n}_${on ? "on" : "off"}`]; if (!a) return null;
+      html += artImg(a, SEG_X[n][i], 44, 0) +
+        artText(SEG_X[n][i], 44, a.width, a.height, `line-height:${px(a.height)};text-align:center;font-size:${px(12)};white-space:nowrap;overflow:hidden;color:${on ? "#fff" : "#8a8890"}`, p.choices[i]);
+    }
+    return html;
+  }
+  return null;
+}
+
+// ---------- device view ----------
+// Draws each slot from the same bounds, font heights and colours tools/gen_ui.py writes into
+// TUI.json (slider_component, knob_component, fader_component, toggle_component, radio_component,
+// tab_component). Keep the numbers here in step with that file. Parts the MPC firmware draws itself
+// (the generic slider bar, the plotter trace, the header and tab bar) are stand-ins.
+let devOn = true, devSize = false;
+try { const v = JSON.parse(localStorage.getItem("mpc-ui-editor-view") || "{}"); devOn = v.devOn !== false; devSize = !!v.devSize; } catch (e) { /* defaults */ }
+const FONT_EM = 1.521;   // Titillium Web: ascent + descent per em. The skin gives font heights (px), CSS wants em size.
+const SEG_W = { 2: 122, 3: 80, 4: 58 };
+// Same layout as gen_ui.py knob_stacked(): name centred above the knob, value centred on it.
+function knobStacked(size, M, T, name, val, drawKnob) {
+  const band = SH - size, x = Math.floor((SW - size) / 2);
+  const nameFont = Math.max(14, Math.min(26, Math.round(band * 0.92)));
+  return drawKnob(x, band) +
+    devLabel(0, 0, SW, band, nameFont, M, name, "centre", true) +
+    devLabel(x, band + Math.floor(size / 2) - 16, size, 32, 22, T, val, "centre");
+}
+function argbCss(v) { const n = parseInt(v, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${(((n >>> 24) & 255) / 255).toFixed(3)})`; }
+function styleColour(key) {
+  const def = { text: "ffffffff", muted: "ff6a6a6c" }, s = doc.extra.style;
+  return argbCss(s && /^[0-9a-f]{8}$/i.test(s[key] || "") ? s[key] : def[key]);
+}
+// The name a control shows: the user's label, or the parameter's name. A slider bar always shows the parameter's name.
+// A hidden name (label "") draws nothing on the MPC, so the screen shows nothing in its place.
+const shownName = s => (s.widget !== "slider" && s.label !== undefined) ? s.label : s.param;
+// Plain view only: a hidden name shows a faint placeholder, so the slot's name can still be double-clicked.
+const plainName = s => (s.widget !== "slider" && s.label === "") ? "(name hidden)" : shownName(s);
+// Sets a slot's name from typed text. Blank text goes back to the parameter's name, but a hidden name stays hidden.
+function setSlotName(s, text) {
+  const t = String(text || "").trim().slice(0, MAX_LABEL);
+  if (t === s.param) delete s.label;
+  else if (t === "") { if (s.label !== "") delete s.label; }
+  else s.label = t;
+}
+// editable: a parameter-name label that double-click can rename in device view (data-lbl marks it).
+function devLabel(x, y, w, h, height, colour, text, just, editable) {
+  const jc = just === "right" ? "flex-end" : just === "centre" ? "center" : "flex-start";
+  return `<div${editable ? ' data-lbl="1"' : ""} style="${artPos(x, y, w, h, `display:flex;align-items:center;justify-content:${jc};font-family:'Titillium Web',system-ui,sans-serif;` +
+    `font-size:${px((height / FONT_EM).toFixed(2))};line-height:1;color:${colour};white-space:nowrap;overflow:hidden;` +
+    (editable ? "pointer-events:auto;cursor:text" : "pointer-events:none"))}">${esc(text)}</div>`;
+}
+const devBox = (x, y, w, h, css) => `<div style="${artPos(x, y, w, h, css + ";pointer-events:none")}"></div>`;
+function devHtml(s) {
+  const T = styleColour("text"), M = styleColour("muted");
+  if (s.widget === "empty") return "";
+  if (s.widget === "text") return devLabel(0, 0, SW, SH, 30, T, s.text);
+  const p = byName[s.param], name = shownName(s), val = p ? p.display : "";
+  const def = p ? Math.min(1, Math.max(0, Number(p.default) || 0)) : 0;
+  const A = kitArt && artOn ? kitArt.assets : {};
+  const frame = a => Math.round(def * ((a.frames || 1) - 1));
+  if (s.widget === "plotter") {
+    return devBox(0, 0, SW, 80, `border-bottom:${px(2)} solid var(--kit);background:linear-gradient(180deg,transparent 40%,color-mix(in srgb,var(--kit) 25%,transparent))`) +
+      devLabel(0, 84, SW, 24, 22, M, name, undefined, true);
+  }
+  if (s.widget === "knob") {
+    const a = A[p && bipolarFor(s, p) ? "knob_bi" : "knob_uni"];
+    if (a) {
+      return knobStacked(a.width, M, T, name, val, (x, y) => artImg(a, x, y, frame(a)));
+    }
+    return knobStacked(77, M, T, name, val, (x, y) =>
+      devBox(x, y, 77, 77, `border-radius:50%;border:${px(5)} solid #6a6a6c;border-top-color:var(--kit);box-sizing:border-box`));
+  }
+  if (s.widget === "fader") {
+    const a = A[p && bipolarFor(s, p) ? "fader_h_bi" : "fader_h_uni"];
+    return devLabel(15, 8, 135, 34, 24, M, name, undefined, true) + devLabel(150, 8, 113, 34, 26, T, val, "right") +
+      (a ? artImg(a, 15, 54, frame(a)) : devBox(15, 66, 248, 10, `border-radius:${px(5)};background:linear-gradient(90deg,var(--kit) ${def * 100}%,#434347 ${def * 100}%)`));
+  }
+  const n = p && p.choices ? p.choices.length : 0;
+  if (s.widget === "switch" && p && p.kind !== "bool" && n >= 2 && n <= 4) {
+    const idx = Math.round(def * (n - 1));
+    let h = devLabel(15, 8, 248, 34, 24, M, name, undefined, true);
+    for (let i = 0; i < n; i++) {
+      const a = A[`seg${n}_${i === idx ? "on" : "off"}`], x = SEG_X[n][i];
+      h += (a ? artImg(a, x, 54, 0) : devBox(x, 54, SEG_W[n], 40, `border-radius:${px(4)};background:${i === idx ? "var(--kit)" : "#2a2a2d"}`)) +
+        devLabel(x, 54, SEG_W[n], 40, 22, T, p.choices[i], "centre");
+    }
+    return h;
+  }
+  if (s.widget === "switch") {
+    const a = A[def >= 0.5 ? "toggle_on" : "toggle_off"];
+    // The Button draws its image at native size, centred in its 84 x 68 bounds at 186, 20.
+    return devLabel(15, 12, 170, 36, 26, M, name, undefined, true) + devLabel(15, 52, 170, 42, 30, T, val) +
+      (a ? artImg(a, 186 + (84 - a.width) / 2, 20 + (68 - a.height) / 2, 0)
+         : devBox(196, 38, 64, 32, `border-radius:${px(16)};background:${def >= 0.5 ? "var(--kit)" : "#434347"}`));
+  }
+  // slider: the MPC's own generic bar in a 248 x 77 box at 15, 15. Its exact look is the firmware's; this is a stand-in.
+  return devBox(15, 15, 248, 77, `box-sizing:border-box;border:1px solid ${M};background:linear-gradient(90deg,color-mix(in srgb,var(--kit) 45%,transparent) ${def * 100}%,transparent ${def * 100}%)`) +
+    devLabel(25, 17, 228, 34, 24, M, name) + devLabel(25, 50, 228, 40, 28, T, val);
+}
+
+function slotHtml(s, i) {
+  if (devOn) return devHtml(s);
+  const plot = s.widget === "plotter";
+  const q = plot ? "" : `<span class="q">Q${qlink(i)}</span>`;   // plotters have no hardware knob
+  if (s.widget === "text") return q + `<div class="textw">${esc(s.text)}</div>`;
+  if (plot) return `<div class="nm" data-lbl="1">${esc(plainName(s))}</div><div class="gfx"><div class="plot"></div></div>`;
+  if (s.widget === "empty") return q + `<div class="wd">spacer</div>`;
+  if (artOn) { const a = artHtml(s); if (a) return q + a; }
+  const g = { knob: '<div class="knob"></div>', fader: '<div class="fader"></div>', switch: '<div class="switch"></div>',
+    slider: '<div class="fader" style="opacity:.55"></div>' }[s.widget] || "";
+  return q + `<div class="nm" data-lbl="1">${esc(plainName(s))}</div><div class="wd">${s.widget}${s.polarity ? " · " + s.polarity : ""}</div><div class="gfx">${g}</div>`;
+}
+
+// Double-click a name in device view to type the text the MPC shows. Enter or leaving the box keeps it;
+// Escape cancels. An empty name, or the parameter's own name, removes the label.
+function editLabel(lb, slot, i) {
+  const s = doc.pages[cur].slots[i];
+  if (!s || s.widget === "slider") return;
+  slot.draggable = false;
+  editText(lb, shownName(s), v => setSlotName(s, v));
+}
+function editGroupLabel(lb, gi) {
+  const g = doc.pages[cur].groups[gi];
+  if (!g) return;
+  editText(lb, g.label, v => { g.label = v.slice(0, GROUP_LABEL_MAX); });
+}
+// Makes a label box editable in place. commit(text) saves what was typed. Enter or leaving the box keeps it; Escape cancels.
+function editText(lb, start, commit) {
+  let done = false;
+  lb.contentEditable = "true"; lb.spellcheck = false;
+  lb.style.background = "#000000cc"; lb.style.outline = "1px solid var(--kit)";
+  lb.textContent = start;
+  const finish = keep => {
+    if (done) return; done = true;
+    if (keep) commit(lb.textContent.trim());
+    renderAll();
+  };
+  lb.addEventListener("keydown", e => {
+    e.stopPropagation();   // keeps Delete and Ctrl+Z out of the text
+    if (e.key === "Enter") { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  lb.addEventListener("blur", () => finish(true));
+  ["click", "pointerdown", "dblclick"].forEach(t => lb.addEventListener(t, e => e.stopPropagation()));
+  lb.focus();
+  const r = document.createRange(); r.selectNodeContents(lb);
+  const sel2 = window.getSelection(); sel2.removeAllRanges(); sel2.addRange(r);
+}
+
+function renderStage() {
+  const pg = doc.pages[cur];
+  $("stageTitle").textContent = `Screen: page ${cur + 1} "${pg.name}"`;
+  // Scale for the art: 1 unit = one tab-area pixel at the current stage width.
+  const dev = $("device");
+  dev.classList.toggle("dev", devOn); dev.classList.toggle("actual", devOn && devSize);
+  $("devOn").checked = devOn; $("devSize").checked = devSize; $("devSize").disabled = !devOn;
+  $("devTop").hidden = $("devTabs").hidden = !devOn;
+  $("stageNote").textContent = devOn
+    ? "Controls are drawn at the positions, text sizes and colours the generator writes for the MPC, at their default values. The header, tab bar, plain slider bars and plotter traces are drawn by the MPC itself, so those are stand-ins. Click a slot to select it; the highlight is the MPC's focus frame. Double-click a name to change the text the MPC shows. Drag a box on empty screen, or Shift/Ctrl-click, to select several controls, then Group them."
+    : "Each box is one touch-screen slot at the position the generator uses. Dashed frames are Q-Link banks: the four slots in one column are the group the hardware knobs control together. Q numbers show which hardware knob drives each slot.";
+  const st = $("stage"); dev.style.setProperty("--s", (st.clientWidth || TW) / TW);
+  if (devOn) {
+    const tabs = $("devTabs"); tabs.innerHTML = "";
+    doc.pages.forEach((p, i) => {
+      const b = el("button", i === cur ? "cur" : ""); b.textContent = p.name; b.title = `Page ${i + 1}`;
+      b.addEventListener("click", () => { cur = i; sel = null; artSel = -1; renderAll(); });
+      b.addEventListener("dragover", e => { if (dragPayload) { e.preventDefault(); b.classList.add("over"); } });
+      b.addEventListener("dragleave", () => b.classList.remove("over"));
+      b.addEventListener("drop", e => { e.preventDefault(); b.classList.remove("over"); dropOnPage(i); });
+      tabs.appendChild(b);
+    });
+  }
+  st.style.background = "#" + screenBg().slice(2, 8);   // the screen colour, as the tab will show it
+  const cv = $("canvas"); cv.innerHTML = "";
+  // Pictures first (bottom), then the Q-Link banks and slots on top.
+  const pics = (pg.background ? [{ image: pg.background, x: 0, y: 0, w: TW, h: TH, bg: true }] : []).concat(pg.art);
+  pics.forEach(a => {
+    const ai = a.bg ? -1 : pg.art.indexOf(a);
+    const d = el("div", a.bg ? "pic" : "pic art" + (ai === artSel ? " sel" : ""));
+    if (!a.bg) d.dataset.art = ai;
+    pos(d, a.x, a.y, a.w, a.h, TW, TH);
+    const url = assetFiles[a.image];
+    const tiled = a.bg ? pg.bgTile : a.tile, scale = a.bg ? pg.bgScale : a.scale, sz = assetSizes[a.image];
+    if (url && tiled && sz) {
+      // Preview of the tiling: the picture repeated at scale % of its own size, as gen_ui.py lays it out.
+      const tw = Math.max(1, Math.round(sz.w * scale / 100)), th = Math.max(1, Math.round(sz.h * scale / 100));
+      const t = el("div", "tiled");
+      t.style.backgroundImage = `url('${url}')`;
+      t.style.backgroundSize = `calc(var(--s) * ${tw}px) calc(var(--s) * ${th}px)`;
+      d.appendChild(t);
+    }
+    else if (url) { const im = el("img"); im.src = url; im.alt = a.image; im.draggable = false; d.appendChild(im); }
+    else { const sp = el("span"); sp.textContent = a.image ? a.image + (Object.keys(assetFiles).length ? " (not found)" : "") : "no picture chosen"; d.appendChild(sp); }
+    if (!a.bg) { const g = el("div", "pic-grip"); g.dataset.grip = ai; d.appendChild(g); }
+    cv.appendChild(d);
+  });
+  // Group outlines, under the controls. The hit edge, label and grip are what the pointer can grab.
+  pg.groups.forEach((g, gi) => {
+    const d = el("div", "grp" + (gi === grpSel ? " sel" : ""));
+    d.dataset.grp = gi;
+    pos(d, g.x, g.y, g.w, g.h, TW, TH);
+    d.innerHTML = `<div class="grp-hit"></div>` +
+      `<div class="grp-lbl" data-glbl="1"${g.label ? "" : ' style="opacity:.45"'}>${esc(g.label || "Double-click to name")}</div>` +
+      (gi === grpSel ? `<div class="pic-grip" data-grip="${gi}"></div>` : "");
+    d.addEventListener("dblclick", e => {
+      // The outline captures the pointer while it is pressed, so the event's target is the outline, not the label.
+      // Find the label under the pointer instead.
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      const lb = under && under.closest ? under.closest("[data-glbl]") : null;
+      if (lb && lb.parentElement === d) { e.preventDefault(); editGroupLabel(lb, gi); }
+    });
+    const lb = d.querySelector(".grp-lbl");
+    if (lb) pos(lb, 18, 6, g.w - 36, 26, g.w, g.h);
+    const gr = d.querySelector(".pic-grip");
+    if (gr) pos(gr, g.w - 14, g.h - 14, 14, 14, g.w, g.h);
+    cv.appendChild(d);
+  });
+  if (!devOn) BANKS.forEach((b, c) => {
+    const d = el("div", "bank");
+    pos(d, b[0], b[1], b[2], b[3], TW, TH);
+    const sp = el("span"); sp.textContent = `Bank ${c + 1} · Q-Link ${[1, 5, 9, 13].map(n => n + c).join(" ")}`;
+    d.appendChild(sp); cv.appendChild(d);
+  });
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    const r = i >> 2, c = i & 3, s = pg.slots[i], pr = slotProblems(s);
+    const d = el("div", "slot" + (devOn ? " dev" : "") + (s ? "" : " blank") + (multi.has(i) ? " sel" : "") + (pr.err.length ? " bad" : ""));
+    pos(d, SLOT_X[c], SLOT_Y[r], SW, SH, TW, TH);
+    d.draggable = !!s;
+    d.title = s && s.param ? `${s.param} · ${s.widget}${s.widget === "plotter" ? "" : " · Q-Link " + qlink(i)}` : `Slot ${i + 1} · Q-Link ${qlink(i)}`;
+    d.innerHTML = s ? slotHtml(s, i) : (devOn ? "" : `<div>drop here</div>`);
+    d.addEventListener("click", e => {
+      // Plain click: select just this slot. Shift adds it; Ctrl/Cmd removes it from the selection.
+      if (e.shiftKey) { multi.add(i); }
+      else if (e.ctrlKey || e.metaKey) { multi.delete(i); sel = multi.size ? [...multi][multi.size - 1] : null; if (sel === null) { artSel = -1; } paintSelection(); return; }
+      else { multi = new Set([i]); }
+      sel = i; artSel = -1; grpSel = -1;
+      paintSelection();
+    });
+    d.addEventListener("dblclick", e => {
+      const lb = e.target.closest && e.target.closest("[data-lbl]");
+      if (s && lb) { e.preventDefault(); editLabel(lb, d, i); }
+    });
+    d.addEventListener("dragstart", e => {
+      if (!s) { e.preventDefault(); return; }
+      // Dragging a slot that is part of a multi-selection carries the whole selection.
+      const picked = [...multi].filter(j => doc.pages[cur].slots[j]).sort((a, b) => a - b);
+      dragPayload = multi.size > 1 && multi.has(i) && picked.length > 1 ? { froms: picked, page: cur } : { from: i, page: cur };
+      e.dataTransfer.setData("text/plain", dragPayload.froms ? `${picked.length} controls` : "slot " + (i + 1));
+    });
+    d.addEventListener("dragover", e => { e.preventDefault(); d.classList.add("over"); });
+    d.addEventListener("dragleave", () => d.classList.remove("over"));
+    d.addEventListener("drop", e => { e.preventDefault(); d.classList.remove("over"); dropOn(i); });
+    cv.appendChild(d);
+  }
+}
+
+function renderInspector() {
+  const box = $("inspector");
+  if (grpSel >= 0) {
+    const g = doc.pages[cur].groups[grpSel];
+    box.innerHTML = `<div class="note">Group outline ${grpSel + 1}. Drag its edge to move it, or its corner to resize. It is drawn behind the controls and does not move with them.</div>` +
+      `<div class="row"><label>Label</label><input data-f="glabel" value="${esc(g.label)}" maxlength="${GROUP_LABEL_MAX}" placeholder="e.g. Filter"></div>` +
+      `<div class="row"><label>Left</label><input data-f="gx" type="number" value="${g.x}"><label style="width:auto">Top</label><input data-f="gy" type="number" value="${g.y}"></div>` +
+      `<div class="row"><label>Width</label><input data-f="gw" type="number" value="${g.w}"><label style="width:auto">Height</label><input data-f="gh" type="number" value="${g.h}"></div>` +
+      `<div class="row" style="margin-top:10px"><button data-f="gdel">Delete group</button></div>`;
+    return;
+  }
+  if (multi.size > 1) {
+    box.innerHTML = `<div class="note">${multi.size} controls selected. Shift-click adds, Ctrl-click removes, or drag a box around them.</div>` +
+      `<div class="row"><button class="primary" data-f="mkgrp">Group these</button><span class="note" style="margin:0">Ctrl+G</span></div>` +
+      `<div class="row" style="margin-top:10px"><button data-f="mdel">Clear them</button><button data-f="mclr" style="margin-left:auto">Deselect</button></div>`;
+    return;
+  }
+  if (sel === null) { box.innerHTML = '<div class="note">Click a slot on the screen to edit it. Drag a parameter from the list onto a slot, or double-click it to use the first blank slot.</div>'; return; }
+  const pg = doc.pages[cur], s = pg.slots[sel];
+  const head = `<div class="note">Slot ${sel + 1} · Q-Link ${qlink(sel)} · bank ${bankOf(sel)}</div>`;
+  if (!s) { box.innerHTML = head + '<div class="note">This slot is blank.</div>'; return; }
+  const p = byName[s.param];
+  let h = head;
+  if (s.param) {
+    h += `<div class="row"><label>Parameter</label><b>${esc(s.param)}</b></div>`;
+    if (p) h += `<div class="note">${esc(kindLabel(p))}${isDiscrete(p) ? ": " + esc(p.choices.join(", ")) : ""}</div>`;
+  }
+  const widgets = s.param ? ["knob", "fader", "switch", "slider", "plotter"] : ["text", "empty"];
+  h += `<div class="row"><label>Widget</label><select data-f="widget">${widgets.map(w => `<option value="${w}" ${w === s.widget ? "selected" : ""}>${w}</option>`).join("")}</select></div>`;
+  if (s.param && s.widget !== "text" && s.widget !== "empty") {
+    h += s.widget === "slider"
+      ? `<div class="note">The generic slider bar draws the parameter's own name on the MPC, so a label does not apply.</div>`
+      : `<div class="row"><input type="checkbox" data-f="showname" ${s.label === "" ? "" : "checked"} style="flex:none;width:auto"><span>Show name on the MPC</span></div>` +
+        `<div class="row"><label>Label</label><input data-f="label" value="${esc(s.label || "")}" placeholder="${esc(s.param)}" maxlength="${MAX_LABEL}" ${s.label === "" ? "disabled" : ""} title="The name the MPC shows. Clear it to use the parameter's name."></div>`;
+  }
+  if (s.widget === "text") h += `<div class="row"><label>Text</label><input data-f="text" value="${esc(s.text)}"></div>`;
+  if (s.param && s.widget === "plotter") {
+    h += `<div class="row"><label>Range min</label><input data-f="pmin" type="number" step="any" value="${s.min}"></div>`;
+    h += `<div class="row"><label>Range max</label><input data-f="pmax" type="number" step="any" value="${s.max}"></div>`;
+    h += `<div class="note">The plotter shows the value's history as a scrolling trace. Use a display-only parameter that the plugin updates itself.</div>`;
+  } else if (s.param) {
+    h += `<div class="row"><label>Overlay</label><select data-f="overlay">${["knob", "menu"].map(o => `<option value="${o}" ${o === s.overlay ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
+    if (s.widget === "knob" || s.widget === "fader") {
+      h += `<div class="row"><label>Polarity</label><select data-f="polarity">${["auto", "unipolar", "bipolar"].map(o => `<option value="${o}" ${o === (s.polarity || "auto") ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
+    }
+    const vw = s.visibleWhen;
+    const opts = params.filter(q => isDiscrete(q) && q.name !== s.param);
+    h += `<div class="row"><label>Show when</label><select data-f="vwParam"><option value="">Always</option>${opts.map(q => `<option value="${esc(q.name)}" ${vw && vw.param === q.name ? "selected" : ""}>${esc(q.name)}</option>`).join("")}</select></div>`;
+    if (vw) {
+      const vp = byName[vw.param];
+      const choices = vp ? vp.choices : [vw.choice];
+      h += `<div class="row"><label>Choice</label><select data-f="vwChoice">${choices.map(c => `<option value="${esc(c)}" ${c === vw.choice ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></div>`;
+    }
+  }
+  const pr = slotProblems(s);
+  h += pr.err.map(m => `<div class="errs">✕ ${esc(m)}</div>`).join("") + pr.warn.map(m => `<div class="warns">! ${esc(m)}</div>`).join("");
+  h += `<div class="row" style="margin-top:10px"><button data-f="clear">Clear slot</button></div>`;
+  box.innerHTML = h;
+}
+
+function renderWarnings() {
+  const list = allProblems(), box = $("warnings");
+  if (!list.length) { box.innerHTML = '<div class="ok">No problems found.</div>'; return; }
+  box.innerHTML = list.map(p => `<div class="${p.err ? "errs" : "warns"}">${p.err ? "✕" : "!"} ${esc(p.msg)}</div>`).join("");
+}
+
+function renderKit() {
+  const ks = $("kitTheme");
+  ks.innerHTML = `<option value="">Default (mpc-red)</option>` + THEMES.map(t => `<option value="${t}">${t}</option>`).join("");
+  ks.value = doc.kit && doc.kit.theme ? doc.kit.theme : "";
+  $("kitAccent").value = (doc.kit && doc.kit.accent) || "";
+  // Colour the widget previews with the same accent the kit will render with.
+  // An accent picked or typed wins over the theme, as it does in tools/gen_ui.py.
+  const theme = doc.kit && doc.kit.theme ? doc.kit.theme : "mpc-red";
+  const argb = (doc.kit && doc.kit.accent) || THEME_ACCENT[theme] || THEME_ACCENT["mpc-red"];
+  const hex = "#" + argb.slice(2, 8);
+  document.documentElement.style.setProperty("--kit", hex);
+  $("kitPick").value = hex;
+  $("kitSwatch").title = `Kit accent ${hex}`;
+  $("bgPick").value = "#" + screenBg().slice(2, 8);
+
+  $("artOn").checked = artOn;
+  $("artOn").disabled = !kitArt;
+  const msgs = [];
+  if (!kitArt) msgs.push("No kit artwork loaded. Choose a kit folder (for example ui-kit/mpc-red). Opened from a file, this editor cannot load the default folder by itself.");
+  else {
+    msgs.push(`Art: ${kitArt.source} (${kitArt.theme}).`);
+    if (kitArt.theme !== theme) msgs.push(`The selected theme is "${theme}". Render it with python tools/make_ui_kit.py --theme ${theme} --out <folder>, then choose that folder.`);
+    else if (kitArt.accent && kitArt.accent.slice(2).toLowerCase() !== argb.slice(2).toLowerCase()) msgs.push(`The art's accent is #${kitArt.accent.slice(2)}. A different accent here recolours only the schematic; re-render the kit to change the art.`);
+  }
+  $("artNote").textContent = msgs.join(" ");
+}
+
+// ---------- events ----------
+$("pages").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  const i = +b.dataset.i, act = b.dataset.act;
+  if (act === "sel") { cur = i; sel = null; artSel = -1; }
+  else if (act === "up" && i > 0) { swap(doc.pages, i, i - 1); if (cur === i) cur = i - 1; else if (cur === i - 1) cur = i; }
+  else if (act === "down" && i < doc.pages.length - 1) { swap(doc.pages, i, i + 1); if (cur === i) cur = i + 1; else if (cur === i + 1) cur = i; }
+  else if (act === "del") {
+    if (doc.pages.length === 1) { status("Keep at least one page", true); return; }
+    if (!confirm(`Delete page "${doc.pages[i].name}"?`)) return;
+    doc.pages.splice(i, 1);
+    if (cur > i) cur--;
+    cur = Math.min(cur, doc.pages.length - 1); sel = null;
+  }
+  renderAll();
+});
+$("pages").addEventListener("change", e => {
+  if (e.target.dataset.act !== "name") return;
+  doc.pages[+e.target.dataset.i].name = e.target.value.trim() || "Page";
+  renderAll();
+});
+$("addPage").addEventListener("click", () => {
+  if (doc.pages.length >= MAX_PAGES) { status(`The MPC supports at most ${MAX_PAGES} pages.`, true); return; }
+  doc.pages.push(newPage(String(doc.pages.length + 1)));
+  cur = doc.pages.length - 1; sel = null; renderAll();
+});
+
+$("search").addEventListener("input", e => { search = e.target.value; renderPalette(); });
+$("palette").addEventListener("dragover", e => e.preventDefault());
+$("palette").addEventListener("drop", e => {
+  e.preventDefault();
+  const pl = dragPayload; dragPayload = null;
+  if (pl && (pl.from !== undefined || pl.froms)) {
+    // Dropping a slot, or a selection, back on the list clears it.
+    const pg = doc.pages[pl.page ?? cur];
+    for (const i of (pl.froms || [pl.from])) pg.slots[i] = null;
+    sel = null; renderAll();
+  }
+});
+document.addEventListener("dragend", () => { dragPayload = null; document.querySelectorAll(".over").forEach(n => n.classList.remove("over")); });
+
+$("stage").addEventListener("click", e => {
+  if (bandJustEnded) { bandJustEnded = false; return; }   // the end of a box selection, not a click on empty screen
+  if (e.target.id === "canvas") { sel = null; artSel = -1; grpSel = -1; renderAll(); }
+});
+
+function saveView() { try { localStorage.setItem("mpc-ui-editor-view", JSON.stringify({ devOn, devSize })); } catch (e) { /* storage blocked */ } }
+$("devOn").addEventListener("change", e => { devOn = e.target.checked; saveView(); renderAll(); });
+$("devSize").addEventListener("change", e => { devSize = e.target.checked; saveView(); renderStage(); renderStage(); });
+
+// ---------- artwork: move, resize and drop pictures on the screen ----------
+const canvasRect = () => $("canvas").getBoundingClientRect();
+const clampN = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+let artDrag = null;   // {i, mode, el, sx, sy, o} while a picture is being moved or resized
+
+$("canvas").addEventListener("pointerdown", e => {
+  const g = e.target.closest(".pic.art, .grp"); if (!g) return;
+  const isGrp = g.classList.contains("grp");
+  const list = isGrp ? doc.pages[cur].groups : doc.pages[cur].art;
+  const i = +(isGrp ? g.dataset.grp : g.dataset.art), a = list[i]; if (!a) return;
+  const grip = e.target.dataset && e.target.dataset.grip !== undefined;
+  if (isGrp) { grpSel = i; grpPage = cur; artSel = -1; } else artSel = i;
+  sel = null; multi = new Set();
+  // A group's edge band resizes the side(s) the pointer is on; its label and body move it.
+  const sides = isGrp && e.target.classList.contains("grp-hit") && !grip ? edgeSides(a, e.clientX, e.clientY) : null;
+  artDrag = { i, list, sides, mode: grip ? "resize" : sides ? "edges" : "move", el: g, sx: e.clientX, sy: e.clientY, o: { x: a.x, y: a.y, w: a.w, h: a.h }, changed: false };
+  try { g.setPointerCapture(e.pointerId); } catch (err) { /* no active pointer (synthetic events): drag still works while the pointer is over the screen */ }
+  g.classList.add("sel");
+  e.preventDefault();
+});
+$("canvas").addEventListener("pointermove", e => {
+  if (!artDrag) return;
+  const a = artDrag.list[artDrag.i]; if (!a) return;
+  const r = canvasRect();
+  const dx = Math.round((e.clientX - artDrag.sx) / r.width * TW), dy = Math.round((e.clientY - artDrag.sy) / r.height * TH);
+  const o = artDrag.o;
+  if (artDrag.mode === "move") { a.x = clampN(o.x + dx, 0, TW - a.w); a.y = clampN(o.y + dy, 0, TH - a.h); }
+  else if (artDrag.mode === "edges") {
+    // Only the sides the pointer grabbed move; the opposite side stays where it is.
+    const s = artDrag.sides;
+    if (s.l) { a.x = clampN(o.x + dx, 0, o.x + o.w - 8); a.w = o.x + o.w - a.x; }
+    if (s.r) a.w = clampN(o.w + dx, 8, TW - o.x);
+    if (s.t) { a.y = clampN(o.y + dy, 0, o.y + o.h - 8); a.h = o.y + o.h - a.y; }
+    if (s.b) a.h = clampN(o.h + dy, 8, TH - o.y);
+  }
+  else { a.w = clampN(o.w + dx, 8, TW - a.x); a.h = clampN(o.h + dy, 8, TH - a.y); }
+  artDrag.changed = artDrag.changed || a.x !== o.x || a.y !== o.y || a.w !== o.w || a.h !== o.h;
+  if (artDrag.list === doc.pages[cur].groups) { placeGroupEl(artDrag.el, a); syncGroupFields(); }
+  else pos(artDrag.el, a.x, a.y, a.w, a.h, TW, TH);
+});
+function endArtDrag() {
+  if (!artDrag) return;
+  const changed = artDrag.changed; artDrag = null;
+  // A drag re-draws the screen. A plain click only shows the new selection, so the label under it survives.
+  if (changed) renderAll(); else paintSelection();
+}
+$("canvas").addEventListener("pointerup", endArtDrag);
+$("canvas").addEventListener("pointercancel", endArtDrag);
+
+// Dropping image files from the desktop onto the screen adds them as pictures.
+const hasFiles = e => !!e.dataTransfer && [...(e.dataTransfer.types || [])].includes("Files");
+const imageSize = url => new Promise(resolve => {
+  const im = new Image();
+  im.onload = () => resolve({ w: im.naturalWidth || 200, h: im.naturalHeight || 100 });
+  im.onerror = () => resolve({ w: 200, h: 100 });
+  im.src = url;
+});
+const stageEl = $("stage");
+stageEl.addEventListener("dragover", e => { if (hasFiles(e)) { e.preventDefault(); stageEl.classList.add("filedrop"); } });
+stageEl.addEventListener("dragleave", e => { if (!stageEl.contains(e.relatedTarget)) stageEl.classList.remove("filedrop"); });
+stageEl.addEventListener("drop", async e => {
+  stageEl.classList.remove("filedrop");
+  if (!hasFiles(e)) return;
+  e.preventDefault();
+  const files = [...e.dataTransfer.files].filter(f => /\.(png|jpe?g)$/i.test(f.name));
+  if (!files.length) { status("Only PNG or JPEG files can be dropped on the screen", true); return; }
+  const r = canvasRect();
+  const dropX = (e.clientX - r.left) / r.width * TW, dropY = (e.clientY - r.top) / r.height * TH;
+  const pg = doc.pages[cur];
+  const names = [];
+  let copied = false;
+  for (const f of files) {
+    let name = f.name;
+    if (assetsDir) {
+      // Copy into the assets folder and use the copy's name, so the layout points at the file that gets built.
+      try { name = await copyIntoAssets(f); copied = true; }
+      catch (err) { status(`Could not copy ${f.name} into the assets folder: ${err.message}`, true); continue; }
+    }
+    if (!assetFiles[name]) assetFiles[name] = URL.createObjectURL(f);
+    const size = await imageSize(assetFiles[name]);
+    assetSizes[name] = size;
+    const s = Math.min(1, 400 / size.w, 300 / size.h);      // start at most 400 x 300, keeping the shape
+    const w = Math.max(8, Math.round(size.w * s)), h = Math.max(8, Math.round(size.h * s));
+    pg.art.push({ image: name, x: clampN(Math.round(dropX - w / 2), 0, TW - w), y: clampN(Math.round(dropY - h / 2), 0, TH - h), w, h });
+    names.push(name);
+  }
+  artSel = pg.art.length - 1;
+  if (!names.length) { renderAll(); return; }
+  status(copied
+    ? `Copied into the assets folder as ${names.join(", ")}. The layout uses the new ${names.length === 1 ? "copy" : "copies"}.`
+    : `Added ${names.join(", ")}. Choose the assets folder (Assets folder…) to copy pictures automatically, or copy the file in by hand before building.`);
+  renderAll();
+});
+// Delete removes the selected picture when no slot is selected.
+document.addEventListener("keydown", e => {
+  if ((e.key === "Delete" || e.key === "Backspace") && artSel >= 0 && sel === null && !isTyping()) {
+    doc.pages[cur].art.splice(artSel, 1); artSel = -1; renderAll();
+  }
+});
+$("artList").addEventListener("focusin", e => { const i = +e.target.dataset.i; if (!isNaN(i) && artSel !== i) { artSel = i; renderStage(); } });
+
+// Typing a group's numbers moves its outline as you type.
+$("inspector").addEventListener("input", e => {
+  const f = e.target.dataset.f;
+  if (grpSel < 0 || !/^g(x|y|w|h)$/.test(f || "") || e.target.value === "") return;
+  const g = doc.pages[cur].groups[grpSel], v = Number(e.target.value);
+  if (!g || !isFinite(v)) return;
+  setGroupBox(g, { gx: "x", gy: "y", gw: "w", gh: "h" }[f], Math.round(v));
+  const d = document.querySelector(`#canvas .grp[data-grp="${grpSel}"]`);
+  if (d) placeGroupEl(d, g);
+  syncGroupFields();
+});
+$("inspector").addEventListener("change", e => {
+  const f = e.target.dataset.f;
+  if (grpSel >= 0 && /^g(label|x|y|w|h)$/.test(f || "")) {
+    const g = doc.pages[cur].groups[grpSel]; if (!g) return;
+    const v = e.target.value;
+    if (f === "glabel") g.label = v.trim().slice(0, GROUP_LABEL_MAX);
+    else setGroupBox(g, { gx: "x", gy: "y", gw: "w", gh: "h" }[f], Math.round(Number(v) || 0));
+    renderAll(); return;
+  }
+  if (!f || sel === null) return;
+  const s = doc.pages[cur].slots[sel]; if (!s) return;
+  const v = e.target.value;
+  if (f === "widget") {
+    s.widget = v;
+    if (v === "plotter") { delete s.overlay; if (s.min === undefined) s.min = 0; if (s.max === undefined) s.max = 1; }
+    else { delete s.min; delete s.max; }
+    if (s.param && v !== "plotter") s.overlay = (v === "switch" || isDiscrete(byName[s.param])) ? "menu" : "knob";
+    else if (v === "text" && !s.text) s.text = "HEADING";
+    if (v !== "knob" && v !== "fader") delete s.polarity;
+  }
+  else if (f === "label") setSlotName(s, v);
+  else if (f === "showname") { if (e.target.checked) { if (s.label === "") delete s.label; } else s.label = ""; }
+  else if (f === "text") s.text = v;
+  else if (f === "pmin") s.min = Number(v);
+  else if (f === "pmax") s.max = Number(v);
+  else if (f === "overlay") s.overlay = v;
+  else if (f === "polarity") { if (v === "auto") delete s.polarity; else s.polarity = v; }
+  else if (f === "vwParam") {
+    if (!v) delete s.visibleWhen;
+    else { const vp = byName[v]; s.visibleWhen = { param: v, choice: vp && vp.choices.length ? vp.choices[0] : "" }; }
+  }
+  else if (f === "vwChoice") { if (s.visibleWhen) s.visibleWhen.choice = v; }
+  renderAll();
+});
+$("inspector").addEventListener("click", e => {
+  const f = e.target.dataset.f;
+  if (f === "mkgrp") makeGroup();
+  else if (f === "mclr") { sel = null; renderAll(); }
+  else if (f === "mdel") { for (const i of multi) doc.pages[cur].slots[i] = null; sel = null; renderAll(); }
+  else if (f === "gdel" && grpSel >= 0) deleteGroup(grpSel);
+});
+$("inspector").addEventListener("click", e => {
+  if (e.target.dataset.f === "clear" && sel !== null) { doc.pages[cur].slots[sel] = null; sel = null; renderAll(); }
+});
+
+document.addEventListener("keydown", e => {
+  if ((e.key === "Delete" || e.key === "Backspace") && sel !== null && !isTyping()) {
+    for (const i of (multi.size ? multi : [sel])) doc.pages[cur].slots[i] = null;
+    sel = null; renderAll();
+  }
+});
+
+// doc.kit keeps only what is set: {theme?, accent?}, or null when neither is set.
+function setKit(theme, accent) {
+  const k = {};
+  if (theme) k.theme = theme;
+  if (accent) k.accent = accent;
+  doc.kit = Object.keys(k).length ? k : null;
+  renderAll();
+}
+$("kitTheme").addEventListener("change", async e => {
+  setKit(e.target.value, doc.kit && doc.kit.accent);
+  // Art from the repo's ui-kit/ folder follows the theme: switch to that theme's rendered folder.
+  if (kitArt && /^\.\.\/ui-kit\//.test(kitArt.source)) {
+    const theme = e.target.value || "mpc-red", base = "../ui-kit/" + theme + "/";
+    try { await loadKitArtFromUrl(base); artOn = true; }
+    catch (err) { status(`No rendered kit at ${base}. Run: python tools/make_ui_kit.py --theme ${theme} --out ui-kit/${theme}`, true); }
+    renderAll();
+  }
+});
+$("kitAccent").addEventListener("change", e => {
+  const v = e.target.value.trim().toLowerCase();
+  if (v && !/^[0-9a-f]{8}$/.test(v)) { status("Accent must be 8 hex digits, like ff19c6e0", true); renderKit(); return; }
+  setKit(doc.kit && doc.kit.theme, v);
+});
+$("kitPick").addEventListener("input", e => {
+  // The colour picker gives #rrggbb; the kit wants ARGB, so the alpha is always ff.
+  setKit(doc.kit && doc.kit.theme, "ff" + e.target.value.slice(1).toLowerCase());
+});
+
+// Screen background: kept as style.background in the ui.json "style" block (doc.extra.style).
+const BG_DEFAULT = "ff1e1d1e";   // gen_ui.py DEFAULT_STYLE
+function screenBg() {
+  const s = doc.extra.style;
+  return s && typeof s.background === "string" && /^[0-9a-f]{8}$/i.test(s.background) ? s.background.toLowerCase() : BG_DEFAULT;
+}
+function setScreenBg(argb) {
+  const s = { ...(doc.extra.style || {}) };
+  if (argb && argb.toLowerCase() !== BG_DEFAULT) s.background = argb.toLowerCase(); else delete s.background;
+  if (Object.keys(s).length) doc.extra.style = s; else delete doc.extra.style;
+  renderAll();
+}
+$("bgPick").addEventListener("input", e => setScreenBg("ff" + e.target.value.slice(1)));
+$("bgClear").addEventListener("click", () => setScreenBg(null));
+
+$("bParams").addEventListener("click", () => openKind("params"));
+$("bLoad").addEventListener("click", () => openKind("ui"));
+$("fParams").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (f) await ingest("params", await f.text(), f.name);
+});
+$("fUi").addEventListener("change", async e => {
+  const f = e.target.files[0]; e.target.value = ""; if (f) await ingest("ui", await f.text(), f.name);
+});
+$("bReopen").addEventListener("click", reopenFromDisk);
+$("bSave").addEventListener("click", saveUi);
+$("bNew").addEventListener("click", () => {
+  if (!confirm("Start a new empty layout? Unsaved changes will be lost.")) return;
+  doc = { pages: [newPage("1")], kit: null, extra: {} }; cur = 0; sel = null; loadNotes = [];
+  renderAll();
+});
+
+// Kit artwork sources: a folder on the web (the repo's ui-kit/, when this page is served
+// over http) or a folder the user picks (works from a file too).
+async function loadKitArtFromUrl(base) {
+  const r = await fetch(base + "kit.json");
+  if (!r.ok) throw new Error("kit.json not found (HTTP " + r.status + ")");
+  const j = await r.json();
+  kitArt = { source: base, theme: j.theme, accent: j.colours && j.colours.accent, assets: j.assets || {}, urlFor: f => base + f };
+}
+async function loadKitArtFromFiles(files) {
+  const named = {};
+  files.forEach(f => { const parts = (f.webkitRelativePath || f.name).split("/"); if (parts.length === 2) named[parts[1]] = f; });
+  if (!named["kit.json"]) throw new Error("no kit.json in that folder; choose a rendered kit folder such as ui-kit/mpc-red");
+  const j = JSON.parse(await named["kit.json"].text());
+  const urls = {};
+  Object.keys(named).forEach(n => { if (n.endsWith(".png")) urls[n] = URL.createObjectURL(named[n]); });
+  kitArt = { source: files[0].webkitRelativePath.split("/")[0], theme: j.theme, accent: j.colours && j.colours.accent,
+    assets: j.assets || {}, urlFor: f => urls[f] || "" };
+}
+$("bKitDir").addEventListener("click", () => $("fKitDir").click());
+$("fKitDir").addEventListener("change", async e => {
+  const files = [...e.target.files]; e.target.value = "";
+  if (!files.length) return;
+  try { await loadKitArtFromFiles(files); artOn = true; status("Kit artwork loaded from " + kitArt.source + "."); }
+  catch (err) { status("Kit folder: " + err.message, true); }
+  renderAll();
+});
+$("artOn").addEventListener("change", e => { artOn = e.target.checked; renderAll(); });
+window.addEventListener("resize", () => renderStage());
+// The side columns stick just below the header, so the header's height is passed to CSS.
+function setHeaderHeight() { document.documentElement.style.setProperty("--hdr", document.querySelector("header").offsetHeight + 12 + "px"); }
+setHeaderHeight();
+window.addEventListener("resize", setHeaderHeight);
+
+// ---------- draft (kept in this browser only) ----------
+function saveDraft() {
+  try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ doc, params, cur, fileNames })); } catch (e) { /* storage blocked: ignore */ }
+}
+function loadDraft() {
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY); if (!raw) return false;
+    const d = JSON.parse(raw);
+    if (!d || !d.doc || !Array.isArray(d.doc.pages) || !d.doc.pages.length) return false;
+    doc = d.doc; params = d.params || [];
+    // Drafts saved before artwork existed have no background or art: fill them in.
+    doc.pages.forEach(pg => {
+      pg.background = pg.background || null; pg.art = Array.isArray(pg.art) ? pg.art : [];
+      pg.groups = Array.isArray(pg.groups) ? pg.groups : [];
+      pg.bgTile = !!pg.bgTile; pg.bgScale = clampScale(pg.bgScale);
+      pg.art.forEach(a => { a.tile = !!a.tile; a.scale = clampScale(a.scale); });
+    });
+    byName = {}; params.forEach(p => { byName[p.name] = p; });
+    cur = Math.min(d.cur || 0, doc.pages.length - 1);
+    fileNames = { params: "", ui: "", ...(d.fileNames || {}) };
+    return true;
+  } catch (e) { return false; }
+}
+
+// ---------- start ----------
+(async () => {
+  if (loadDraft()) status("Restored your last session from this browser. Reopen from disk to re-read the files.");
+  else status("Load params.json (plugins/AcidBox/build/params.json) to begin.");
+  try { await loadKitArtFromUrl("../ui-kit/mpc-red/"); artOn = true; } catch (e) { /* not served over http: use Kit folder */ }
+  await restoreAssetsFolder();
+  renderAll();
+  await refreshReopen();
+})();
+</script>
+</body>
+</html>
