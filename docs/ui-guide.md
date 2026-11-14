@@ -131,6 +131,8 @@ Name an element in `ui.json` with `"element"`. A build draws the element's pictu
 { "widget": "text", "text": "Filter", "element": "example-label" }
 ```
 
+**Putting a knob element on a layout in the editor.** Save the element from `tools/ui_designer.html`, then in `tools/ui_editor.html` select a knob slot and pick the element from **Element** in the Inspector. The editor draws it straight from its `element.json` (no render step), at the value set by **Preview**. If the list isn't there yet, press **Choose ui-library folder…** beside Element once and pick the repo's `ui-library` folder; the editor remembers it (after a reload it may ask with one click, **Reconnect**). Served from the repo, the editor finds `ui-library/` by itself. After saving a new element in the designer, press **↻** beside Element.
+
 `button` is a push button for a bool parameter (its own widget, drawn with the LED style). A button element sets its roundness (`corner`), the width of its highlight and the width of its drop shadow.
 
 Knob, fader, switch and button elements can set depth (`shadow` and `highlight`, in px) and an `outlineWidth`; a knob can add ridges round its outer edge (`ridges`: `count` and `length`). Leaving a setting out keeps the kit's look.
