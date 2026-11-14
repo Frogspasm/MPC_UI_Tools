@@ -1018,7 +1018,7 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
                 f, n, size = get("knob_uni" if not bi else "knob_bi")
                 ed = elem.element_def or {}
                 comp = knob_component(style, overlay, (f, n, size[0]), n, bipolar=bi, name_text=text,
-                                      show_value=ed.get("showValue", True),
+                                      show_value=ed.get("showValue", True) and ed.get("valueStyle") != "segments",   # the glyph is the value
                                       value_size=float(ed.get("valueSize", 22)),
                                       value_colour=ed.get("valueColour"))
             elif knob_image:

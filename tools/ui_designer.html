@@ -179,6 +179,9 @@ main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;paddi
     <div data-for="knob">
       <h2 style="margin-top:12px">Value</h2>
       <div class="row"><label>In centre</label><input id="valOn" type="checkbox" style="width:auto"><span class="note">show the parameter's value on the knob</span></div>
+      <div class="row"><label>Look</label><select id="valStyle"><option value="plain">plain text</option><option value="segments">16-segment glyphs</option></select></div>
+      <div class="row" id="glyphRow"><label>Glyphs</label><input id="glyphs" type="text" maxlength="64" placeholder="one character per value, e.g. 0123456789"></div>
+      <div class="note">16-segment glyphs: the knob shows one character for each value, so use it with a parameter that has a fixed list of values (the count of characters must match the number of values). Letters, digits and - / ( ) ' . are available. The knob's own drawing is replaced.</div>
       <div class="row"><label>Size</label><input id="valSizeOn" type="checkbox" style="width:auto"><input id="valSize" type="number" min="8" max="60" step="1"><span class="note">px (off uses the MPC's 22)</span></div>
       <div class="row"><label>Colour</label><input id="valColOn" type="checkbox" style="width:auto"><input id="valCol" type="color" style="margin-left:auto"><span class="note">off uses the base text colour</span></div>
     </div>
@@ -264,6 +267,12 @@ function problems() {
     if (!(el.height >= 20 && el.height <= 120)) out.push("Button height must be 20 to 120.");
   }
   if (el.type === "label" && !(el.text.height >= 8 && el.text.height <= 60)) out.push("Text height must be 8 to 60.");
+  if (el.type === "knob" && el.valueStyle === "segments") {
+    const g = el.glyphs || "";
+    if (!(g.length >= 1 && g.length <= 64)) out.push("Glyphs: give 1 to 64 characters, one per value.");
+    const bad = [...g].filter(c => !(c in CHAR16));
+    if (bad.length) out.push("Glyphs: no 16-segment glyph for " + bad.join(" ") + ".");
+  }
   if (el.ticks) {
     if (!(el.ticks.count >= 2 && el.ticks.count <= 33)) out.push("Tick count must be 2 to 33.");
     if (!(el.ticks.length >= 2 && el.ticks.length <= 60)) out.push("Tick length must be 2 to 60 px.");
@@ -293,6 +302,8 @@ function toFile() {
     if (el.pointerOffset !== undefined) o.pointerOffset = el.pointerOffset;
     if (el.showValue === false) o.showValue = false;
     if (el.valueSize !== undefined) o.valueSize = el.valueSize;
+    if (el.valueStyle) o.valueStyle = el.valueStyle;
+    if (el.valueStyle === "segments") o.glyphs = el.glyphs;
     if (el.valueColour) o.valueColour = el.valueColour;
     if (el.kHl && el.highlightAngle !== undefined) o.highlightAngle = el.highlightAngle;
     if (el.kHl && el.highlightFade) o.highlightFade = el.highlightFade;
@@ -392,6 +403,9 @@ function fillForm() {
     $(extra[k][1]).value = hexRgb(on ? el.colours[k] : THEME_ACCENT["mpc-red"]);
     $(extra[k][1]).disabled = !on;
   }
+  $("valStyle").value = el.valueStyle === "segments" ? "segments" : "plain";
+  $("glyphs").value = el.glyphs || "";
+  $("glyphRow").classList.toggle("hide", el.valueStyle !== "segments");
   $("valSizeOn").checked = el.valueSize !== undefined;
   $("valSize").value = el.valueSize ?? 22;
   $("valSize").disabled = el.valueSize === undefined;
@@ -463,6 +477,11 @@ function readForm() {
     if (el.type === "knob" && $(on).checked) el.colours[k] = rgbArgb($(pick).value);
     $(pick).disabled = !$(on).checked;
   }
+  el.valueStyle = $("valStyle").value === "plain" ? undefined : $("valStyle").value;
+  if (el.valueStyle === undefined) delete el.valueStyle;
+  el.glyphs = el.valueStyle === "segments" ? $("glyphs").value : undefined;
+  if (el.glyphs === undefined) delete el.glyphs;
+  $("glyphRow").classList.toggle("hide", el.valueStyle !== "segments");
   el.valueSize = $("valSizeOn").checked ? Number($("valSize").value) : undefined;
   if (el.valueSize === undefined) delete el.valueSize;
   el.valueColour = $("valColOn").checked ? rgbArgb($("valCol").value) : undefined;
@@ -568,6 +587,38 @@ $("curve").addEventListener("dblclick", e => {
   drawCurve(); refresh();
 });
 
+// ---------- 16-segment glyphs (the same tables as tools/ui_segments.py) ----------
+const SEG16 = {
+  a1: [[6,4],[19,4],[16,10],[10,10]], a2: [[21,4],[34,4],[30,10],[24,10]],
+  b: [[36,6],[36,32],[31,30],[31,10]], c: [[36,38],[36,64],[31,60],[31,40]],
+  d1: [[6,66],[19,66],[16,60],[10,60]], d2: [[21,66],[34,66],[30,60],[24,60]],
+  e: [[4,38],[4,64],[9,60],[9,40]], f: [[4,6],[4,32],[9,30],[9,10]],
+  g1: [[8,35],[10,32],[18,32],[19,35],[18,38],[10,38]], g2: [[21,35],[22,32],[30,32],[32,35],[30,38],[22,38]],
+  h: [[11,10],[17,10],[20,31],[17,31]], i: [[29,10],[23,10],[20,31],[23,31]],
+  j: [[11,60],[17,60],[20,39],[17,39]], k: [[29,60],[23,60],[20,39],[23,39]],
+  l: [[19,38],[21,38],[21,62],[19,62]], m: [[19,8],[21,8],[21,32],[19,32]],
+};
+const SEG_ORDER = ["a1", "a2", "b", "c", "d1", "d2", "e", "f", "g1", "g2", "h", "i", "j", "k", "l", "m"];
+const CHAR16 = {
+  " ": "", "-": "g1g2", "/": "ij", "(": "fe", ")": "bc", "'": "m", ".": "l",
+  "0": "a1a2bcd1d2efij", "1": "bcm", "2": "a1a2bg1g2ed1d2", "3": "a1a2bcd1d2g2", "4": "fg1g2bc",
+  "5": "a1a2fg1g2cd1d2", "6": "a1a2fg1g2ced1d2", "7": "a1a2bc", "8": "a1a2bcd1d2efg1g2", "9": "a1a2bcd1d2fg1g2",
+  A: "a1a2bcefg1g2", B: "a1a2bcd1d2mlg1g2", C: "a1a2fed1d2", D: "a1a2bcd1d2ml", E: "a1a2fed1d2g1", F: "a1a2feg1",
+  G: "a1a2fed1d2cg2", H: "febcg1g2", I: "a1a2d1d2ml", J: "bcd1d2e", K: "feg1hk", L: "fed1d2", M: "febchi",
+  N: "febchk", O: "a1a2bcd1d2ef", P: "a1a2bfeg1g2", Q: "a1a2bcd1d2efk", R: "a1a2bfeg1g2k", S: "a1a2fg1g2cd1d2",
+  T: "a1a2ml", U: "bcd1d2ef", V: "efjk", W: "efbcjkhi", X: "hijk", Y: "him", Z: "a1a2d1d2ij",
+};
+// One glyph at the knob's centre-square: lit segments in `lit`, the rest in `dark` (colours as css strings).
+function drawGlyph(ctx, cx, cy, H, ch, lit, dark) {
+  const W = H * 40 / 70, x0 = cx - W / 2, y0 = cy - H / 2;
+  const on = new Set((CHAR16[ch] || "").match(/a[12]|d[12]|g[12]|[a-m]/g) || []);
+  for (const name of SEG_ORDER) {
+    ctx.beginPath();
+    SEG16[name].forEach(([x, y], i) => { const X = x0 + x * W / 40, Y = y0 + y * H / 70; i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+    ctx.closePath(); ctx.fillStyle = on.has(name) ? lit : dark; ctx.fill();
+  }
+}
+
 // Knob at (0,0)-(S,S). Value arc is always drawn; body, track, pointer and outline follow P.
 function drawKnob(ctx, S, t, bi, th, P, st) {
   st = st || {};
@@ -654,11 +705,18 @@ function drawKnob(ctx, S, t, bi, th, P, st) {
     ctx.beginPath(); ctx.strokeStyle = css(th.pointer); ctx.lineWidth = Math.max(2.5, faceR * 0.11); ctx.lineCap = "round";
     ctx.moveTo(px0, py0); ctx.lineTo(px1, py1); ctx.stroke();
   }
-  if (st.valueText) {
-    // The parameter's value, centred on the knob (a preview of the number the MPC shows there).
-    ctx.font = `${st.valueSize ?? 22}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = st.valueColour ? css(st.valueColour) : "#ffffff";
-    ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(st.valueText, c, c);
+  if (st.glyphs && st.glyphs.length) {
+    // A 16-segment value: the glyph for this value at the centre, sized by valueSize (value i of n at t = i/(n-1)).
+    const n = st.glyphs.length, ch = st.glyphs[Math.min(n - 1, Math.round(t * (n - 1)))];
+    drawGlyph(ctx, S / 2, S / 2, st.valueSize ?? 22, ch, st.glyphLit || "rgb(255,74,58)", st.glyphDark || "rgb(58,20,16)");
   }
+  if (st.valueText) drawValueText(ctx, S, st);
+}
+// The parameter's value, centred on the knob (a preview of the number the MPC shows there).
+function drawValueText(ctx, S, st) {
+  const c = S / 2;
+  ctx.font = `${st.valueSize ?? 22}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = st.valueColour ? css(st.valueColour) : "#ffffff";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(st.valueText, c, c);
 }
 
 // Fader at (0,0)-(248,36): track, value fill, cap.
@@ -769,6 +827,8 @@ function draw() {
   ctx.clearRect(0, 0, w, h);
   const th = theme(), t = value, P = partsNow(), bi = $("pol").value === "bi";
   const isKnob = el.type === "knob";
+  // The centre text: the test value as a number (not for a 16-segment knob, where the glyph is the value).
+  const valueTextFor = t => el.valueStyle === "segments" ? undefined : String(Math.round(t * 100));   // a glyph is the value; no text
   const st = { shadow: el.depth ? el.depth.shadow : undefined,
                highlight: isKnob ? (el.kHl || undefined) : (el.depth ? el.depth.highlight : undefined),
                outline_w: el.outlineWidth, ridges: el.ridges ? el.ridges : undefined,
@@ -777,7 +837,10 @@ function draw() {
                hlFade: isKnob ? el.highlightFade : undefined,
                pLen: el.pointerLength, pOff: el.pointerOffset,
                valueSize: el.valueSize, valueColour: el.valueColour,
-               valueText: isKnob && el.showValue !== false ? String(Math.round(t * 100)) : undefined };
+               glyphs: isKnob && el.valueStyle === "segments" && el.glyphs ? el.glyphs : undefined,
+               glyphLit: isKnob && el.valueColour ? css(el.valueColour) : undefined,
+               glyphDark: isKnob && el.valueColour ? cssA(mixA(argb(el.valueColour), BLACK, 0.85)) : undefined,
+               valueText: isKnob && el.showValue !== false ? valueTextFor(t) : undefined };
   if (el.type === "knob") {
     const ox = (w - el.size) / 2, oy = (h - el.size) / 2;
     if (el.ticks) drawTicks(ctx, el.ticks, "knob", w / 2, h / 2);

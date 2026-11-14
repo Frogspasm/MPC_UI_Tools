@@ -262,6 +262,7 @@ async function ingest(kind, text, name) {
     const theme = (doc.kit && doc.kit.theme) || "mpc-red";
     if (kitArt.theme !== theme) { try { await loadKitArtFromUrl("../ui-kit/" + theme + "/"); } catch (e) { /* not rendered: the Kit panel says so */ } }
   }
+  doc.pages.forEach(pg => pg.slots.forEach(sl => { if (sl && sl.element) ensureElementArt(sl.element); }));
   renderAll();
   return true;
 }
@@ -392,6 +393,7 @@ function fromJson(c, pi) {
   const s = { param: String(c.param), widget: w, overlay: c.overlay || (w === "switch" ? "menu" : "knob") };
   if (w === "plotter") { delete s.overlay; s.min = c.min ?? 0; s.max = c.max ?? 1; }
   if (c.polarity && c.polarity !== "auto" && (w === "knob" || w === "fader")) s.polarity = c.polarity;
+  if (typeof c.element === "string" && c.element.trim()) s.element = c.element.trim();
   if (typeof c.label === "string") s.label = c.label.trim();   // "" means the name is hidden
   if (c.visibleWhen) {
     const v = c.visibleWhen, vp = byName[v.param];
@@ -435,6 +437,7 @@ function toJson(s) {
   if (s.label !== undefined && s.widget !== "slider") o.label = s.label;   // "" hides the name; the slider bar draws its own
   if (s.widget === "plotter") { o.min = s.min; o.max = s.max; return o; }   // no overlay, no Q-Link
   o.overlay = s.overlay || (s.widget === "switch" ? "menu" : "knob");
+  if (s.element && s.widget === "knob") o.element = s.element;
   if (s.polarity && s.polarity !== "auto" && (s.widget === "knob" || s.widget === "fader")) o.polarity = s.polarity;
   return o;
 }
@@ -979,6 +982,51 @@ function renderPalette() {
   });
 }
 
+// The value a control is drawn at: the slot's preview (set in the Inspector) or the parameter's default.
+function previewOf(s, p) {
+  if (typeof s.preview === "number") return Math.min(1, Math.max(0, s.preview));
+  return Math.min(1, Math.max(0, Number(p.default) || 0));
+}
+// ---------- library elements (ui-library/<name>/): their knob pictures are drawn in place of the kit's ----------
+const elementArt = {}, elementLoading = {};
+async function ensureElementArt(name) {
+  if (!name || elementArt[name] || elementLoading[name]) return;
+  elementLoading[name] = true;
+  const base = "../ui-library/" + name + "/";
+  try {
+    const r = await fetch(base + "manifest.json");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const m = await r.json(), assets = {};
+    for (const [k, a] of Object.entries(m.assets || {})) assets[k] = { ...a, src: base + a.file };
+    elementArt[name] = { assets, valueStyle: m.valueStyle || null };
+  } catch (err) {
+    elementArt[name] = { error: `No library element "${name}" could be drawn: ui-library/${name}/manifest.json was not found. Serve the repo (not the file alone) and render the element.` };
+  }
+  renderAll();
+}
+
+// The library elements: the folders in ui-library/ (read from the server's folder listing). null when it can't be read.
+let libraryNames = null;
+async function loadLibraryNames() {
+  try {
+    const r = await fetch("../ui-library/");
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const names = [...(await r.text()).matchAll(/href="([^"?#\/][^"?#]*)\/"/g)].map(m => decodeURIComponent(m[1]));
+    libraryNames = [...new Set(names)].sort((a, b) => a.localeCompare(b));
+  } catch (err) { libraryNames = null; }
+}
+// The Element row of the Inspector: a drop-down of the library's elements, or a text box when the list is unavailable.
+function elementField(s) {
+  const cur = s.element || "";
+  if (libraryNames === null) {
+    return `<div class="row"><label>Element</label><input data-f="element" value="${esc(cur)}" placeholder="kit knob" title="A library element (a folder name in ui-library/). Blank draws the kit's knob."></div>`;
+  }
+  const names = cur && !libraryNames.includes(cur) ? [cur, ...libraryNames] : libraryNames;
+  const opts = [`<option value="" ${cur ? "" : "selected"}>kit knob</option>`]
+    .concat(names.map(n => `<option value="${esc(n)}" ${n === cur ? "selected" : ""}>${esc(n)}${libraryNames.includes(n) ? "" : " (missing)"}</option>`));
+  return `<div class="row"><label>Element</label><select data-f="element" title="A library element from ui-library/. Kit knob uses the kit's picture.">${opts.join("")}</select></div>`;
+}
+
 // ---------- kit artwork preview ----------
 // Real film-strip graphics from a rendered kit folder (kit.json + PNGs), drawn at their
 // true size relative to the 1280 x 628 tab area and shown at each control's default value.
@@ -990,7 +1038,7 @@ const artPos = (x, y, w, h, extra = "") => `position:absolute;left:${px(x)};top:
 function artImg(a, x, y, frame) {
   const n = a.frames || 1;
   return `<div style="${artPos(x, y, a.width, a.height,
-    `background-image:url('${kitArt.urlFor(a.file)}');background-repeat:no-repeat;` +
+    `background-image:url('${a.src || kitArt.urlFor(a.file)}');background-repeat:no-repeat;` +
     `background-position:0 ${px(-frame * a.height)};background-size:${px(a.width)} ${px(a.height * n)}`)}"></div>`;
 }
 function artText(x, y, w, h, css, t) { return `<div style="${artPos(x, y, w, h, css)}">${esc(t)}</div>`; }
@@ -1085,17 +1133,20 @@ function devHtml(s) {
   if (s.widget === "empty") return "";
   if (s.widget === "text") return devLabel(0, 0, SW, SH, 30, T, s.text);
   const p = byName[s.param], name = shownName(s), val = p ? p.display : "";
-  const def = p ? Math.min(1, Math.max(0, Number(p.default) || 0)) : 0;
+  const def = p ? previewOf(s, p) : 0;
   const A = kitArt && artOn ? kitArt.assets : {};
+  const E = s.element && elementArt[s.element] && elementArt[s.element].assets ? elementArt[s.element] : null;
   const frame = a => Math.round(def * ((a.frames || 1) - 1));
   if (s.widget === "plotter") {
     return devBox(0, 0, SW, 80, `border-bottom:${px(2)} solid var(--kit);background:linear-gradient(180deg,transparent 40%,color-mix(in srgb,var(--kit) 25%,transparent))`) +
       devLabel(0, 84, SW, 24, 22, M, name, undefined, true);
   }
   if (s.widget === "knob") {
-    const a = A[p && bipolarFor(s, p) ? "knob_bi" : "knob_uni"];
+    const key = p && bipolarFor(s, p) ? "knob_bi" : "knob_uni";
+    const a = E ? E.assets[key] : A[key];
     if (a) {
-      return knobStacked(a.width, M, T, name, val, (x, y) => artImg(a, x, y, frame(a)));
+      const text = E && E.valueStyle === "segments" ? "" : val;   // a glyph element draws its own value
+      return knobStacked(a.width, M, T, name, text, (x, y) => artImg(a, x, y, frame(a)));
     }
     return knobStacked(77, M, T, name, val, (x, y) =>
       devBox(x, y, 77, 77, `border-radius:50%;border:${px(5)} solid #6a6a6c;border-top-color:var(--kit);box-sizing:border-box`));
@@ -1326,6 +1377,11 @@ function renderInspector() {
     h += `<div class="note">The plotter shows the value's history as a scrolling trace. Use a display-only parameter that the plugin updates itself.</div>`;
   } else if (s.param) {
     h += `<div class="row"><label>Overlay</label><select data-f="overlay">${["knob", "menu"].map(o => `<option value="${o}" ${o === s.overlay ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
+    if (s.widget === "knob") h += elementField(s);
+    if (s.widget === "knob" || s.widget === "fader" || s.widget === "switch") {
+      const pv = p ? previewOf(s, p) : 0;
+      h += `<div class="row"><label>Preview</label><input data-f="preview" type="range" min="0" max="1" step="0.01" value="${pv}" title="Draws the control at this position. Not saved to ui.json."><span class="note">${Math.round(pv * 100)}%</span></div>`;
+    }
     if (s.widget === "knob" || s.widget === "fader") {
       h += `<div class="row"><label>Polarity</label><select data-f="polarity">${["auto", "unipolar", "bipolar"].map(o => `<option value="${o}" ${o === (s.polarity || "auto") ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
     }
@@ -1368,6 +1424,7 @@ function renderKit() {
   $("artOn").checked = artOn;
   $("artOn").disabled = !kitArt;
   const msgs = [];
+  Object.entries(elementArt).forEach(([n, EA]) => { if (EA.error) msgs.push(EA.error); });
   if (!kitArt) msgs.push("No kit artwork loaded. Choose a kit folder (for example ui-kit/mpc-red). Opened from a file, this editor cannot load the default folder by itself.");
   else {
     msgs.push(`Art: ${kitArt.source} (${kitArt.theme}).`);
@@ -1530,6 +1587,11 @@ $("artList").addEventListener("focusin", e => { const i = +e.target.dataset.i; i
 
 // Typing a group's numbers moves its outline as you type.
 $("inspector").addEventListener("input", e => {
+  if (e.target.dataset.f === "preview") {   // drag the Preview slider: the slot re-draws as you move it
+    const s = sel !== null && doc.pages[cur].slots[sel];
+    if (s) { s.preview = Number(e.target.value); renderStage(); }
+    return;
+  }
   const f = e.target.dataset.f;
   if (grpSel < 0 || !/^g(x|y|w|h)$/.test(f || "") || e.target.value === "") return;
   const g = doc.pages[cur].groups[grpSel], v = Number(e.target.value);
@@ -1566,6 +1628,8 @@ $("inspector").addEventListener("change", e => {
   else if (f === "pmax") s.max = Number(v);
   else if (f === "overlay") s.overlay = v;
   else if (f === "polarity") { if (v === "auto") delete s.polarity; else s.polarity = v; }
+  else if (f === "element") { const t = v.trim(); if (t) { s.element = t; ensureElementArt(t); } else delete s.element; }
+  else if (f === "preview") s.preview = Number(v);
   else if (f === "vwParam") {
     if (!v) delete s.visibleWhen;
     else { const vp = byName[v]; s.visibleWhen = { param: v, choice: vp && vp.choices.length ? vp.choices[0] : "" }; }
@@ -1716,6 +1780,7 @@ function loadDraft() {
   renderAll();
   await refreshReopen();
 })();
+loadLibraryNames().then(() => { if (sel !== null) renderInspector(); });
 </script>
 </body>
 </html>

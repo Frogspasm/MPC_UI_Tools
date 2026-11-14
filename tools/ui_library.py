@@ -56,6 +56,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_ui_kit as mk  # noqa: E402
+import ui_segments as us  # noqa: E402
 
 FORMAT = 1
 TYPES = ("knob", "fader", "switch", "button", "label")
@@ -68,6 +69,7 @@ TICK_TYPES = ("knob", "fader")
 FRAMES = mk.FRAMES
 DEFAULT_LIBRARY = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "ui-library")
 JUSTIFY = ("left", "centre", "right")
+VALUE_STYLES = ("plain", "segments")   # the knob's centre value: plain text, or a 16-segment glyph per value
 
 
 class ElementError(ValueError):
@@ -174,9 +176,9 @@ def validate(el, folder_name=None):
     allowed = {"format", "name", "type", "base", "accent", "colours", "parts", "ticks", "size",
                "width", "height", "led", "corner", "highlight", "shadow", "outlineWidth", "ridges", "text",
                "cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle",
-               "highlightFade"}
+               "highlightFade", "valueStyle", "glyphs"}
     knob_only = ("cap", "pointerLength", "pointerOffset", "showValue", "valueSize", "valueColour", "highlightAngle",
-                 "highlightFade")
+                 "highlightFade", "valueStyle", "glyphs")
     for k in el:
         if k not in allowed:
             raise ElementError('unknown key "%s" (allowed: %s)' % (k, ", ".join(sorted(allowed))))
@@ -242,6 +244,21 @@ def validate(el, folder_name=None):
             out["highlightAngle"] = _number(el["highlightAngle"], '"highlightAngle"', -180.0, 180.0)
         if "highlightFade" in el:
             out["highlightFade"] = _number(el["highlightFade"], '"highlightFade"', 0.0, 1.0)
+        if "valueStyle" in el:
+            if el["valueStyle"] not in VALUE_STYLES:
+                raise ElementError('"valueStyle" must be one of %s' % ", ".join(VALUE_STYLES))
+            out["valueStyle"] = el["valueStyle"]
+        if out.get("valueStyle") == "segments":
+            glyphs = el.get("glyphs")
+            if not isinstance(glyphs, str) or not 1 <= len(glyphs) <= 64:
+                raise ElementError('"glyphs" must be a string of 1 to 64 characters, one per value, '
+                                   'for a "segments" valueStyle')
+            problem = us.check_glyphs(list(glyphs))
+            if problem:
+                raise ElementError('"glyphs": ' + problem)
+            out["glyphs"] = glyphs
+        elif "glyphs" in el:
+            raise ElementError('"glyphs" applies only when "valueStyle" is "segments"')
     elif typ == "fader":
         for k in ("size", "width", "height", "led", "text", "corner", "ridges") + knob_only:
             if k in el:
@@ -414,7 +431,29 @@ def render_element(el, out_dir, quiet=True):
         assets[key] = {"file": key + ".png", "width": w, "height": h, "frames": frames}
 
     typ = el["type"]
-    if typ == "knob":
+    if typ == "knob" and el.get("valueStyle") == "segments":
+        # the knob as usual, frame by frame, with the 16-segment glyph for that frame's value at the centre,
+        # sized by valueSize. Frame k is at t = k/(FRAMES-1); its value is glyph round(t*(n-1)).
+        s, glyphs = el["size"], el["glyphs"]
+        n = len(glyphs)
+        h = el.get("valueSize", us.DEFAULT_HEIGHT)
+        lit = mk.parse_argb(el["valueColour"]) if "valueColour" in el else us.LIT
+        dark = mk.mix(lit, (0, 0, 0, 255), 0.85) if "valueColour" in el else us.DARK
+        glyph_cache = {}
+        style = element_style(el)
+        for bi_flag, key in ((False, "knob_uni"), (True, "knob_bi")):
+            static, geo = mk.knob_static(s, th, parts, style)
+            frames = []
+            for k in range(FRAMES):
+                t = k / (FRAMES - 1.0)
+                base = mk.knob_frame(static, geo, t, th, bi_flag, parts, style).rows()
+                ch = glyphs[int(round(t * (n - 1)))]
+                if ch not in glyph_cache:
+                    glyph_cache[ch] = us.glyph_box(ch, h, lit, dark)
+                gw, gh, grows = glyph_cache[ch]
+                frames.extend(us.composite(base, s, s, grows, gw, gh, (s - gw) // 2, (s - gh) // 2))
+            emit(key, frames, s, s, FRAMES)
+    elif typ == "knob":
         s = el["size"]
         style = element_style(el)
         emit("knob_uni", mk.render_knob(s, FRAMES, th, False, parts, style), s, s, FRAMES)
@@ -440,7 +479,7 @@ def render_element(el, out_dir, quiet=True):
         emit("button_on", mk.render_button(th, True, w, h, led=led, parts=parts, **shape)[0], w, h, 1)
         emit("button_off", mk.render_button(th, False, w, h, led=led, parts=parts, **shape)[0], w, h, 1)
     manifest = {"format": FORMAT, "name": el["name"], "type": typ, "base": el["base"],
-                "source": source_hash(el), "assets": assets}
+                "source": source_hash(el), "valueStyle": el.get("valueStyle"), "assets": assets}
     with open(os.path.join(out_dir, "manifest.json"), "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")

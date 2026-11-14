@@ -1,0 +1,49 @@
+{
+  "format": 1,
+  "name": "my-knob",
+  "type": "knob",
+  "base": "mpc-red",
+  "colours": {
+    "highlight": "ff716065",
+    "shadow": "ff000000"
+  },
+  "size": 90,
+  "shadow": 1,
+  "highlight": 9,
+  "cap": {
+    "size": 0.7,
+    "shade": 0.5,
+    "curve": [
+      [
+        0,
+        1
+      ],
+      [
+        1,
+        0.14347956730769232
+      ],
+      [
+        0.47767857142857145,
+        0.41271033653846156
+      ],
+      [
+        0.28125,
+        0.6530949519230769
+      ],
+      [
+        0.7366071428571429,
+        0.10501802884615384
+      ]
+    ]
+  },
+  "pointerLength": 0.6,
+  "pointerOffset": 3,
+  "valueSize": 16,
+  "valueColour": "ffff0000",
+  "highlightAngle": -51,
+  "highlightFade": 1,
+  "ridges": {
+    "count": 55,
+    "length": 8
+  }
+}
