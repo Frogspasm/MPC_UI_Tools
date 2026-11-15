@@ -490,6 +490,21 @@ def check_skins(rep, skins_dir, nparams):
                         rep.ok("TUI.json: image %s present" % img)
                     else:
                         rep.error("TUI.json: references image %s which is not in Plugin Skins/" % img)
+                # Label data: handleName is required, and text goes only with type "Text". A "Name" label with
+                # a text key and no handleName made an MPC One show a blank screen for the whole skin.
+                bad_labels = []
+                for path, v in walk(tui):
+                    if isinstance(v, dict) and v.get("type") == "Label" and isinstance(v.get("data"), dict):
+                        d = v["data"]
+                        if "handleName" not in d:
+                            bad_labels.append("%s (%s) has no handleName" % (path, v.get("name")))
+                        if "text" in d and d.get("type") != "Text":
+                            bad_labels.append('%s (%s) has a text but type %s; fixed text needs type "Text"'
+                                              % (path, v.get("name"), json.dumps(d.get("type"))))
+                for msg in bad_labels[:10]:
+                    rep.error("TUI.json: label " + msg)
+                if len(bad_labels) > 10:
+                    rep.error("TUI.json: ... and %d more bad labels" % (len(bad_labels) - 10))
                 if tabs_in_tui:
                     rep.ok("TUI.json: %d tab%s" % (tabs_in_tui, "" if tabs_in_tui == 1 else "s"))
     if not os.path.isfile(q_path):

@@ -120,6 +120,28 @@
                     "items": {
                         "$ref": "#/definitions/control"
                     }
+                },
+                "qlinks": {
+                    "type": "object",
+                    "description": "Q-Link overrides for this page: Q-Link number (\"1\" to \"16\") -> parameter name, or null for none. Q-Links not listed drive the control in their slot.",
+                    "patternProperties": {
+                        "^([1-9]|1[0-6])$": {
+                            "type": [
+                                "string",
+                                "null"
+                            ]
+                        }
+                    },
+                    "additionalProperties": false
+                },
+                "qlinkBanks": {
+                    "type": "string",
+                    "enum": [
+                        "columns",
+                        "rows"
+                    ],
+                    "default": "columns",
+                    "description": "How a model with 4 Q-Links (MPC One, Live) steps through the page: \"columns\" (bank 1 = left column, Q13 Q9 Q5 Q1) or \"rows\" (bank 1 = top row, Q13 Q14 Q15 Q16)."
                 }
             },
             "additionalProperties": false

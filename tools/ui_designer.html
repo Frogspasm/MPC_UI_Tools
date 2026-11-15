@@ -32,6 +32,11 @@ main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;paddi
 .item{padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#242327;cursor:pointer;display:flex;justify-content:space-between;gap:6px;margin-bottom:4px}
 .item.cur{outline:1px solid var(--accent)}
 .item small{color:var(--muted)}
+.libgroup{margin:10px 0 4px;font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);display:flex;justify-content:space-between}
+.libstate{font-size:12px;margin:0 0 8px;color:var(--muted)}
+.libstate b{color:var(--text)}
+.libstate.warn{color:var(--err)}
+#libSave{width:100%;margin:2px 0 4px}
 .stage{background:#17161a;border:1px solid var(--line);border-radius:10px;padding:14px;display:flex;flex-direction:column;align-items:center;gap:12px;min-height:380px}
 .stage canvas{image-rendering:pixelated;background:#1e1d1e;border-radius:6px;max-width:100%}
 #status{color:var(--muted);font-size:12px;margin-left:auto;max-width:520px;text-align:right}
@@ -49,16 +54,18 @@ main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;paddi
   <h1>UI Element Designer</h1>
   <button id="bFolder">Library folder…</button>
   <button id="bNew">New element</button>
-  <button id="bSave" class="primary">Save element</button>
+  <button id="bSave" class="primary" title="Write this element into the library folder (same as the button in the Library panel)">Save to library</button>
   <button id="bDownload">Download element.json</button>
-  <span id="folderName" class="note" style="margin:0"></span>
   <span id="status"></span>
 </header>
 <main>
   <div class="panel">
     <h2>Library</h2>
-    <div id="list"><div class="note">Choose the ui-library/ folder to see its elements. Until then, a new element is kept in this page only.</div></div>
-    <div class="note">Use an element in ui.json with <code>"element": "name"</code>.</div>
+    <div id="libState" class="libstate"></div>
+    <div class="row" id="libConnect"></div>
+    <button id="libSave" class="primary" title="Write this element into the library folder; the layout editor picks it up when you switch back to it">Save to library</button>
+    <div id="list"></div>
+    <div class="note">Click an element to open it. Saving under the same name updates it; the layout editor reads the change the next time you switch to it. Use one in ui.json with <code>"element": "name"</code>.</div>
   </div>
 
   <div>
@@ -213,6 +220,7 @@ main{display:grid;grid-template-columns:240px minmax(0,1fr) 340px;gap:12px;paddi
 </main>
 
 <script src="ui_elements.js"></script>
+<script src="ui_server_fs.js"></script>
 <script>
 // Kit accent colours (tools/make_ui_kit.py THEMES) and the kit's default colours (GREYS), for the preview.
 // Drawing comes from ui_elements.js (shared with the layout editor).
@@ -227,6 +235,9 @@ const FONT_EM = 1.521;   // Titillium Web: ascent + descent per em (as the layou
 
 let el = starter("knob");       // the element being edited
 let libDir = null;              // FileSystemDirectoryHandle of ui-library/, or null
+let libPending = null;          // a folder remembered from last time that needs one click to be used again
+let savedText = null;           // element.json as last saved or opened, to show unsaved changes
+const LIB_TYPES = [["knob", "Knobs"], ["fader", "Faders"], ["switch", "Switches"], ["button", "Buttons"], ["label", "Labels"]];
 let loadedName = "";            // name of the element on disk that the form came from
 let value = 0.5;
 
@@ -499,10 +510,12 @@ function refresh() {
   $("checks").innerHTML = errs.length ? errs.map(m => `<div class="errs">✕ ${m}</div>`).join("")
     : '<div class="ok">Valid. Save it to the library, then build a plugin that names it.</div>';
   $("bSave").disabled = errs.length > 0;
+  $("libSave").disabled = errs.length > 0;
   $("bDownload").disabled = errs.length > 0;
-  $("folderName").textContent = libDir ? "Library: " + libDir.name : "No library folder chosen";
+  libPanel();
   draw();
   saveState();
+  publishLive(errs.length === 0);
 }
 
 // ---------- preview ----------
@@ -614,18 +627,73 @@ function idb(fn) {
 }
 async function rememberFolder(dir) { try { await idb(s => s.put(dir, "library")); } catch (e) { /* storage blocked */ } }
 async function restoreFolder() {
+  // Opened from tools/ui_server.py: the repo's ui-library, saved through the server (no permission, no reconnect).
+  if (await UISERVER.available()) { libDir = UISERVER.dir("ui-library"); libPending = null; await refreshList(); refresh(); return; }
   if (!window.showDirectoryPicker) return;
-  try { const dir = await idb(s => s.get("library")); if (dir && (await dir.queryPermission({ mode: "readwrite" })) === "granted") { libDir = dir; await refreshList(); refresh(); } }
-  catch (e) { /* no storage */ }
+  try {
+    const dir = await idb(s => s.get("library"));
+    if (!dir) return;
+    if ((await dir.queryPermission({ mode: "readwrite" })) === "granted") { libDir = dir; await refreshList(); }
+    else libPending = dir;   // the browser asks once per visit: Reconnect
+    refresh();
+  } catch (e) { /* no storage */ }
 }
 async function chooseFolder() {
-  if (!window.showDirectoryPicker) { status("This browser cannot open a folder. Use Download element.json and save it into ui-library/<name>/.", true); return; }
-  try { libDir = await showDirectoryPicker({ mode: "readwrite" }); await rememberFolder(libDir); await refreshList(); status("Library: " + libDir.name); refresh(); }
-  catch (e) { if (e.name !== "AbortError") status(e.message, true); }
+  if (!window.showDirectoryPicker) { status("This browser cannot open a folder. Use Download element.json and save it into ui-library/<name>/.", true); return false; }
+  try {
+    const dir = await showDirectoryPicker({ id: "uilibrary", mode: "readwrite" });
+    if (!(await looksLikeLibrary(dir)) && !confirm(`"${dir.name}" has no elements in it yet. Use it as the library anyway?\n\nThe repo's library is the ui-library folder.`)) return false;
+    libDir = dir; libPending = null; await rememberFolder(libDir); await refreshList(); status("Library: " + libDir.name); refresh();
+    return true;
+  } catch (e) { if (e.name !== "AbortError") status(e.message, true); return false; }
 }
+// A folder is a library when it is named ui-library or holds at least one <name>/element.json.
+async function looksLikeLibrary(dir) {
+  if (dir.name === "ui-library") return true;
+  for await (const entry of dir.values()) {
+    if (entry.kind !== "directory") continue;
+    try { await entry.getFileHandle("element.json"); return true; } catch (e) { /* not an element folder */ }
+  }
+  return false;
+}
+// The folder remembered from last time: one click gives the browser's permission again.
+async function reconnectFolder() {
+  const dir = libPending;
+  if (!dir) return chooseFolder();
+  try {
+    if ((await dir.requestPermission({ mode: "readwrite" })) !== "granted") { status("The browser did not allow the folder.", true); return false; }
+    libDir = dir; libPending = null; await refreshList(); status("Library: " + libDir.name); refresh();
+    return true;
+  } catch (e) { status(e.message, true); return false; }
+}
+// The top of the Library panel: which folder, the button that reaches it, and whether the form has unsaved changes.
+function libPanel() {
+  const text = JSON.stringify(toFile(), null, 2) + "\n";
+  const dirty = savedText === null ? !!el.name : text !== savedText;
+  const st = $("libState"), con = $("libConnect");
+  if (libDir) {
+    st.className = "libstate";
+    st.innerHTML = `Saving to <b>${esc(libDir.name)}</b>` + (el.name ? `/${esc(el.name)}` : "") +
+      (libDir.served ? " in the repo" : "") +
+      (dirty ? ' · <span style="color:var(--accent)">unsaved changes</span>' : (loadedName ? " · saved" : ""));
+    con.innerHTML = '<button data-lib="choose" title="Use another library folder">Change folder…</button>';
+  } else if (libPending) {
+    st.className = "libstate warn";
+    st.textContent = `Not connected to ${libPending.name}: the browser asks once per visit.` + (dirty ? " Your changes are not saved." : "");
+    con.innerHTML = `<button data-lib="reconnect" class="primary">Reconnect ${esc(libPending.name)}</button><button data-lib="choose">Other folder…</button>`;
+  } else {
+    st.className = "libstate warn";
+    st.textContent = "No library folder: Save to library will ask for it (choose the repo's ui-library folder).";
+    con.innerHTML = '<button data-lib="choose">Choose ui-library folder…</button>';
+  }
+  const mark = dirty ? " •" : "";
+  $("libSave").textContent = "Save to library" + mark;
+  $("bSave").textContent = "Save to library" + mark;
+}
+const esc = t => String(t).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 async function refreshList() {
   const box = $("list");
-  if (!libDir) { box.innerHTML = '<div class="note">Choose the ui-library/ folder to see its elements.</div>'; return; }
+  if (!libDir) { box.innerHTML = libPending ? '<div class="note">Reconnect to see the saved elements.</div>' : '<div class="note">Choose the ui-library folder to see its elements.</div>'; return; }
   const items = [];
   for await (const entry of libDir.values()) {
     if (entry.kind !== "directory") continue;
@@ -636,8 +704,15 @@ async function refreshList() {
     } catch (e) { /* not an element folder */ }
   }
   items.sort((a, b) => a.name.localeCompare(b.name));
-  box.innerHTML = items.length ? items.map(it => `<div class="item${it.name === loadedName ? " cur" : ""}" data-open="${it.name}"><span>${it.name}</span><small>${it.type}${it.base ? " · " + it.base : ""}</small></div>`).join("")
-    : '<div class="note">No elements in this folder yet.</div>';
+  if (!items.length) { box.innerHTML = '<div class="note">No elements in this folder yet. Design one and press Save to library.</div>'; return; }
+  const known = LIB_TYPES.map(t => t[0]);
+  const groups = LIB_TYPES.concat(items.some(it => !known.includes(it.type)) ? [["?", "Other"]] : []);
+  box.innerHTML = groups.map(([type, title]) => {
+    const mine = items.filter(it => type === "?" ? !known.includes(it.type) : it.type === type);
+    return `<div class="libgroup"><span>${title}</span><span>${mine.length}</span></div>` +
+      (mine.length ? mine.map(it => `<div class="item${it.name === loadedName ? " cur" : ""}" data-open="${esc(it.name)}" title="Open ${esc(it.name)}"><span>${esc(it.name)}</span><small>${esc(it.base)}</small></div>`).join("")
+        : '<div class="note" style="margin:2px 0 6px">none yet</div>');
+  }).join("");
 }
 async function openElement(name) {
   try {
@@ -649,22 +724,37 @@ async function openElement(name) {
       el.depth = j.shadow !== undefined ? { shadow: j.shadow, highlight: j.highlight ?? 0 } : undefined;
     if (j.type === "knob") { el.kHl = j.highlight ?? 0; el.showValue = j.showValue !== false; }
     curvePts = [[0, 0], [1, 1]];   // another element's curve is not this one's
-    loadedName = name; fillForm(); refresh(); refreshList();
+    loadedName = name; fillForm(); readForm();
+    savedText = JSON.stringify(toFile(), null, 2) + "\n";
+    refresh(); refreshList();
     status("Opened " + name);
   } catch (e) { status("Could not open " + name + ": " + e.message, true); }
 }
 async function saveElement() {
   readForm();
   if (problems().length) return;
+  if (!libDir) {
+    // No folder yet: reconnect the remembered one or ask for it, then save. (Download element.json stays as the
+    // way out for browsers that cannot open a folder.)
+    if (!window.showDirectoryPicker) { download(JSON.stringify(toFile(), null, 2) + "\n"); return; }
+    if (!(libPending ? await reconnectFolder() : await chooseFolder())) return;
+  }
   const text = JSON.stringify(toFile(), null, 2) + "\n";
-  if (!libDir) { download(text); return; }
+  const exists = await libDir.getDirectoryHandle(el.name).then(() => true, () => false);
+  if (exists && el.name !== loadedName && !confirm(`The library already has an element called "${el.name}". Replace it with this one?`)) return;
   try {
     const dir = await libDir.getDirectoryHandle(el.name, { create: true });
     const fh = await dir.getFileHandle("element.json", { create: true });
     const w = await fh.createWritable(); await w.write(text); await w.close();
     if (loadedName && loadedName !== el.name) status(`Saved as ${el.name}. The old folder ${loadedName} is still there; delete it by hand if you renamed the element.`);
-    else status("Saved " + el.name + ". In the layout editor, press the refresh button beside Element to use it.");
-    loadedName = el.name;
+    else status("Saved " + el.name + " to " + libDir.name + ". The layout editor picks it up when you switch back to it.");
+    loadedName = el.name; savedText = text;
+    // Tell an open layout editor at once: the element itself, by channel and by a storage note (pages opened
+    // from files may not share the channel). The editor also re-reads the library on its own.
+    const note = { name: el.name, def: JSON.parse(text), t: Date.now() };
+    try { new BroadcastChannel("mpc-ui-library").postMessage(note); } catch (e) { /* no channel */ }
+    try { localStorage.setItem("mpc-ui-library-saved", JSON.stringify(note)); } catch (e) { /* storage blocked */ }
+    refresh();
     await refreshList();
   } catch (e) { status("Save failed: " + e.message, true); }
 }
@@ -694,18 +784,33 @@ $("zoom2").addEventListener("change", draw);
 $("pol").addEventListener("change", draw);
 $("bFolder").addEventListener("click", chooseFolder);
 $("bSave").addEventListener("click", saveElement);
+$("libSave").addEventListener("click", saveElement);
+$("libConnect").addEventListener("click", e => {
+  const b = e.target.closest("[data-lib]"); if (!b) return;
+  if (b.dataset.lib === "reconnect") reconnectFolder(); else chooseFolder();
+});
 $("bDownload").addEventListener("click", () => { readForm(); if (!problems().length) download(JSON.stringify(toFile(), null, 2) + "\n"); });
 $("bNew").addEventListener("click", () => {
-  el = starter("knob"); loadedName = ""; value = 0.5; $("val").value = 0.5; curvePts = [[0, 0], [1, 1]];
+  el = starter("knob"); loadedName = ""; savedText = null; value = 0.5; $("val").value = 0.5; curvePts = [[0, 0], [1, 1]];
   fillForm(); refresh(); refreshList(); status("New element. Name it, then save.");
 });
 $("list").addEventListener("click", e => { const it = e.target.closest("[data-open]"); if (it) openElement(it.dataset.open); });
 // ---------- remembered settings: the element, the curve, the test value, the preview options and the folds ----------
 const UI_KEY = "mpc-ui-designer-state";   // localStorage: this browser's copy of the designer's state
 let folds = {};                            // section key -> true when folded
+// The element being edited, for an open layout editor (it draws it at once, saved or not). Only valid elements go.
+let lastLive = "";
+function publishLive(valid) {
+  if (!valid || !el.name) return;
+  const note = JSON.stringify({ name: el.name, def: toFile() });
+  if (note === lastLive) return;
+  lastLive = note;
+  try { localStorage.setItem("mpc-ui-designer-live", note); } catch (e) { /* storage blocked */ }
+  try { new BroadcastChannel("mpc-ui-library").postMessage(JSON.parse(note)); } catch (e) { /* no channel */ }
+}
 function saveState() {
   try {
-    localStorage.setItem(UI_KEY, JSON.stringify({ el, curvePts, value, pol: $("pol").value, zoom2: $("zoom2").checked, loadedName, folds }));
+    localStorage.setItem(UI_KEY, JSON.stringify({ el, curvePts, value, pol: $("pol").value, zoom2: $("zoom2").checked, loadedName, savedText, folds }));
   } catch (e) { /* storage blocked or full: the designer still works, it just forgets on reload */ }
 }
 function restoreState() {
@@ -717,6 +822,7 @@ function restoreState() {
   if (s.pol) $("pol").value = s.pol;
   if (typeof s.zoom2 === "boolean") $("zoom2").checked = s.zoom2;
   if (typeof s.loadedName === "string") loadedName = s.loadedName;
+  if (typeof s.savedText === "string") savedText = s.savedText;
   if (s.folds && typeof s.folds === "object") folds = s.folds;
 }
 // Each box whose first child is a heading folds: the heading is clicked, the rest of the box hides.

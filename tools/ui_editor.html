@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MPC UI Layout Editor</title>
 <!-- Titillium Web is the MPC's UI font (docs/ui-reference.md 1.5). Offline, the preview falls back to a system font. -->
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Titillium+Web:wght@400;600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&family=Titillium+Web:ital,wght@0,200;0,300;0,400;0,600;0,700;0,900;1,200;1,300;1,400;1,600;1,700&display=swap">
 <style>
 :root{--bg:#121113;--panel:#1e1d1e;--line:#333236;--text:#eee;--muted:#8a8890;--accent:#d31145;--kit:#d31145;--ok:#3fb27f;--warn:#e0a030;--err:#e5484d}
 *{box-sizing:border-box}
@@ -47,6 +47,22 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
 .slot.over{background:#2b1e24}
 .slot.bad{border-color:var(--err)}
 .slot .q{position:absolute;top:3px;right:6px;font-size:10px;color:var(--muted)}
+.slot .q.moved{color:var(--accent);font-weight:600}
+.slot .q.none{color:var(--err)}
+#qGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:8px 0}
+.qcell{border:1px solid var(--line);border-radius:6px;padding:5px 6px;background:#1c1b1f;display:flex;flex-direction:column;gap:3px;min-width:0}
+.qcell.set{border-color:var(--accent)}
+#qBanksRow{gap:12px;align-items:center;font-size:12px;color:var(--muted)}
+#qBanksRow label{display:flex;gap:4px;align-items:center;color:var(--text,#ddd);cursor:pointer}
+.qcell b{font-size:11px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:4px}
+.qcell select{width:100%;min-width:0;font-size:12px;padding:3px 4px}
+.tpl{border:1px solid var(--line);border-radius:6px;padding:5px 7px;margin:4px 0;background:#242327}
+.tpl .tn{display:flex;justify-content:space-between;gap:6px}
+.tpl .tn small{color:var(--muted)}
+.tpl .row{margin:4px 0 0}
+.tpl.layout{border-left:3px solid var(--accent)}
+.tplhead{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 2px}
+.tpl button{padding:2px 7px;font-size:12px}
 /* Name, value and graphic keep their height in a small slot, so their text can still be clicked. */
 .slot > *{flex:none}
 /* A filled slot starts at its top, so a tall stack of name, value and graphic is cut off at the bottom, never the name. */
@@ -82,6 +98,7 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
 .slot.dev{background:transparent;border-color:transparent;padding:0;display:block;overflow:visible;border-radius:0}
 .slot.dev.blank{border:1px dashed rgba(128,128,128,.35)}
 .slot.dev.sel{outline:1px solid var(--kit)}
+.slot.dev.sel [data-bx]{cursor:move!important}
 .slot.dev.sel::before{content:"";position:absolute;inset:calc(var(--s) * 4px);background:#ffffff19;pointer-events:none}
 .slot.dev.over{background:rgba(128,128,128,.25)}
 .slot.dev.bad{border:1px solid var(--err)}
@@ -122,6 +139,13 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
       <div class="note" id="pageCount"></div>
     </div>
     <div class="panel" style="margin-top:12px">
+      <h2>Templates</h2>
+      <div class="note" id="tplState"></div>
+      <div class="row"><button id="tplSave" class="primary" title="Save the page on the screen (controls, names, groups, Q-Links, artwork) as a template">Save this page…</button><button id="tplSaveAll" title="Save every page, with the kit and style, as one layout template">Save whole layout…</button></div>
+      <div id="tplList"></div>
+      <div class="row"><button id="tplFolder" title="The folder that holds page templates: the repo's ui-pages">Templates folder…</button><button id="tplRefresh" title="Read the templates folder again" style="margin-left:auto">↻</button></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
       <h2>Parameters</h2>
       <input id="search" placeholder="Search parameters" style="width:100%">
       <div class="note">Drag a parameter onto a slot, or double-click it to use the first blank slot on this page. Drag a slot back here to clear it.</div>
@@ -140,6 +164,13 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
       </div>
       <h2 style="margin-top:12px">Checks</h2>
       <div id="warnings"></div>
+    </div>
+    <div class="panel" style="margin-top:12px">
+      <h2>Q-Links on this page</h2>
+      <div class="note">The 16 hardware Q-Links, laid out like the screen grid (Q13 top-left, Q1 bottom-left). "Auto" drives the control in that slot. Pick a parameter to make a Q-Link drive something else, or "none" to leave it unused on this page. A model with 4 Q-Links (MPC One, Live) steps through the page in banks of four: by columns (bank 1 is the left column) or by rows (bank 1 is the top row).</div>
+      <div class="row" id="qBanksRow"><span>Banks for 4 Q-Links:</span><label title="Bank 1 is the left column: Q13, Q9, Q5, Q1"><input type="radio" name="qBanks" value="columns"> Columns</label><label title="Bank 1 is the top row: Q13, Q14, Q15, Q16"><input type="radio" name="qBanks" value="rows"> Rows</label></div>
+      <div id="qGrid"></div>
+      <div class="row"><button id="qAuto" title="Every Q-Link drives the control in its own slot again">Reset to automatic</button><button id="qFollow" title="Keep each Q-Link on the parameter it drives now, wherever its control goes when you move controls" style="margin-left:auto">Pin current mapping</button></div>
     </div>
     <div class="panel" style="margin-top:12px">
       <h2>Artwork on this page</h2>
@@ -170,11 +201,14 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
   </div>
 </main>
 <script src="ui_elements.js"></script>
+<script src="ui_server_fs.js"></script>
 <script>
 // Layout constants from tools/gen_ui.py (1280 x 628 tab area, 4 x 4 grid, reading order).
 const SLOT_X = [23, 343, 663, 983], SLOT_Y = [45, 196, 346, 497], SW = 278, SH = 107;
 const TW = 1280, TH = 628;
-const BANKS = [[38, 0, 248, 624], [358, 0, 248, 624], [678, 0, 248, 624], [998, 0, 248, 624]];
+const BANKS = [[38, 0, 248, 624], [358, 0, 248, 624], [678, 0, 248, 624], [998, 0, 248, 624]];   // column banks (gen_ui.QLINK_BOUNDS)
+const ROW_BANKS = [30, 181, 331, 482].map(y => [8, y, 1268, 137]);                               // row banks (gen_ui.QLINK_ROW_BOUNDS)
+function rowBanks(pg) { return (pg || doc.pages[cur]).qlinkBanks === "rows"; }
 const THEMES = ["mpc-red", "amber", "cyan", "lime", "violet", "mono", "acidbox", "acidbox-midnight"];
 // Accent colour of each kit theme, copied from THEMES in tools/make_ui_kit.py (ARGB).
 const THEME_ACCENT = { "mpc-red": "ffd31145", "amber": "ffffa21a", "cyan": "ff19c6e0", "lime": "ff8fd21f", "violet": "ff9b63ff", "mono": "ffe4e4e6", "acidbox": "ffd93a25", "acidbox-midnight": "ffff5b40" };
@@ -204,7 +238,23 @@ function pos(d, x, y, w, h, W, H) {
   d.style.left = (x / W * 100) + "%"; d.style.top = (y / H * 100) + "%";
   d.style.width = (w / W * 100) + "%"; d.style.height = (h / H * 100) + "%";
 }
-function newPage(name) { return { name, slots: Array(MAX_SLOTS).fill(null), background: null, bgTile: false, bgScale: 100, art: [], groups: [] }; }
+function newPage(name) { return { name, slots: Array(MAX_SLOTS).fill(null), background: null, bgTile: false, bgScale: 100, art: [], groups: [], qlinks: {}, qlinkBanks: "columns" }; }
+// Q-Links: by default each hardware Q-Link drives the control in its slot (qlink(i)). A page's qlinks
+// ({"1": "Cutoff", "5": null}) overrides single knobs: a parameter name, or null for none. Same as gen_ui.py.
+function slotOfQ(q) { for (let i = 0; i < MAX_SLOTS; i++) if (qlink(i) === q) return i; return -1; }
+function autoQ(pg, q) {   // the parameter a Q-Link drives when the page does not say: its slot's, if it has one
+  const sl = pg.slots[slotOfQ(q)];
+  return sl && sl.param && sl.widget !== "plotter" ? sl.param : null;
+}
+function effQ(pg, q) { return Object.prototype.hasOwnProperty.call(pg.qlinks || {}, q) ? pg.qlinks[q] : autoQ(pg, q); }
+// The Q-Links that drive a slot's parameter on its page, in hardware order.
+function qsFor(pg, i) {
+  const sl = pg.slots[i];
+  if (!sl || !sl.param) return [];
+  const out = [];
+  for (let q = 1; q <= 16; q++) if (effQ(pg, q) === sl.param) out.push(q);
+  return out;
+}
 // Scale for tiling: a whole percentage of the picture's own size.
 const clampScale = v => clampN(Math.round(Number(v) || 100), 1, 400);
 let assetSizes = {};   // file name -> {w, h} of each loaded picture
@@ -212,7 +262,7 @@ let assetSizes = {};   // file name -> {w, h} of each loaded picture
 // for the project's assets/ folder; it is not saved, so reload the folder after a reload.
 let assetFiles = {};
 function qlink(i) { return 13 + (i & 3) - 4 * (i >> 2); }   // same as gen_ui.slot_qlink
-function bankOf(i) { return (i & 3) + 1; }
+function bankOf(i) { return rowBanks() ? (i >> 2) + 1 : (i & 3) + 1; }
 // Only bool and choice are discrete. Everything else (float, int, ...) is continuous, as in gen_ui.py.
 function isDiscrete(p) { return !!p && (p.kind === "bool" || p.kind === "choice"); }
 function kindLabel(p) {
@@ -395,6 +445,7 @@ function fromJson(c, pi) {
   if (w === "plotter") { delete s.overlay; s.min = c.min ?? 0; s.max = c.max ?? 1; }
   if (c.polarity && c.polarity !== "auto" && (w === "knob" || w === "fader")) s.polarity = c.polarity;
   if (typeof c.element === "string" && c.element.trim()) s.element = c.element.trim();
+  if (c.labelStyle && typeof c.labelStyle === "object" && LS_WIDGETS.includes(w)) s.labelStyle = { ...c.labelStyle };
   if (typeof c.label === "string") s.label = c.label.trim();   // "" means the name is hidden
   if (c.visibleWhen) {
     const v = c.visibleWhen, vp = byName[v.param];
@@ -405,22 +456,32 @@ function fromJson(c, pi) {
   return s;
 }
 
-function parseUi(text) {
-  const d = JSON.parse(text);
-  if (!d || !Array.isArray(d.pages)) throw new Error('expected an object with a "pages" array');
-  loadNotes = [];
-  const pages = d.pages.map((pg, pi) => {
+// One page from its ui.json form (also a page template's "page").
+function pageFromJson(pg, pi) {
     const page = newPage(String((pg && pg.name) ?? (pi + 1)));
     page.background = pg && typeof pg.background === "string" && pg.background ? pg.background : null;
     page.bgTile = !!(pg && pg.backgroundTile);
     page.bgScale = clampScale(pg && pg.backgroundScale);
     page.art = pg && Array.isArray(pg.art) ? pg.art.map(a => ({ image: String((a && a.image) || ""), x: +a.x || 0, y: +a.y || 0, w: +a.w || 1, h: +a.h || 1, tile: !!(a && a.tile), scale: clampScale(a && a.scale) })) : [];
     page.groups = pg && Array.isArray(pg.groups) ? pg.groups.map(g => ({ x: +g.x || 0, y: +g.y || 0, w: +g.w || 1, h: +g.h || 1, label: String((g && g.label) || "") })) : [];
+    page.qlinks = {};
+    if (pg && pg.qlinks && typeof pg.qlinks === "object") Object.entries(pg.qlinks).forEach(([k, v]) => {
+      const q = Number(k);
+      if (Number.isInteger(q) && q >= 1 && q <= 16 && (v === null || typeof v === "string")) page.qlinks[q] = v;
+      else loadNotes.push(`Page ${pi + 1}: Q-Link setting "${k}" was not understood and was dropped.`);
+    });
+    page.qlinkBanks = pg && pg.qlinkBanks === "rows" ? "rows" : "columns";
+    if (pg && pg.qlinkBanks !== undefined && pg.qlinkBanks !== "rows" && pg.qlinkBanks !== "columns") loadNotes.push(`Page ${pi + 1}: "qlinkBanks" ${JSON.stringify(pg.qlinkBanks)} was not understood; using columns.`);
     const ctls = pg && Array.isArray(pg.controls) ? pg.controls : [];
     if (ctls.length > MAX_SLOTS) loadNotes.push(`Page ${pi + 1} had ${ctls.length} controls; only the first ${MAX_SLOTS} were kept.`);
     ctls.slice(0, MAX_SLOTS).forEach((c, i) => { page.slots[i] = fromJson(c, pi); });
     return page;
-  });
+}
+function parseUi(text) {
+  const d = JSON.parse(text);
+  if (!d || !Array.isArray(d.pages)) throw new Error('expected an object with a "pages" array');
+  loadNotes = [];
+  const pages = d.pages.map((pg, pi) => pageFromJson(pg, pi));
   let kit = null;
   if (typeof d.kit === "string") kit = { theme: d.kit };
   else if (d.kit && typeof d.kit === "object") kit = { ...d.kit };
@@ -439,12 +500,19 @@ function toJson(s) {
   if (s.widget === "plotter") { o.min = s.min; o.max = s.max; return o; }   // no overlay, no Q-Link
   o.overlay = s.overlay || (s.widget === "switch" ? "menu" : "knob");
   if (s.element && s.widget === "knob") o.element = s.element;
+  if (s.labelStyle && LS_WIDGETS.includes(s.widget) && Object.keys(s.labelStyle).length) o.labelStyle = { ...s.labelStyle };
   if (s.polarity && s.polarity !== "auto" && (s.widget === "knob" || s.widget === "fader")) o.polarity = s.polarity;
   return o;
 }
 
 function exportUi() {
-  const out = { pages: doc.pages.map(pg => {
+  const out = { pages: doc.pages.map(pageToJson) };
+  if (doc.kit && (doc.kit.theme || doc.kit.accent)) out.kit = doc.kit;
+  Object.assign(out, doc.extra);
+  return out;
+}
+// One page in its ui.json form (also what a page template holds).
+function pageToJson(pg) {
     let last = -1;
     pg.slots.forEach((s, i) => { if (s) last = i; });
     const controls = [];
@@ -455,14 +523,13 @@ function exportUi() {
       if (pg.bgTile) { o.backgroundTile = true; o.backgroundScale = pg.bgScale; }
     }
     if (pg.groups.length) o.groups = pg.groups.map(g => ({ x: g.x, y: g.y, w: g.w, h: g.h, ...(g.label ? { label: g.label } : {}) }));
+    const qk = Object.keys(pg.qlinks || {}).map(Number).sort((a, b) => a - b);
+    if (qk.length) { o.qlinks = {}; qk.forEach(q => { o.qlinks[String(q)] = pg.qlinks[q]; }); }
+    if (pg.qlinkBanks === "rows") o.qlinkBanks = "rows";
     if (pg.art.length) o.art = pg.art.map(a => a.tile
       ? { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h, tile: true, scale: a.scale }
       : { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h });
     return o;
-  }) };
-  if (doc.kit && (doc.kit.theme || doc.kit.accent)) out.kit = doc.kit;
-  Object.assign(out, doc.extra);
-  return out;
 }
 
 async function saveUi() {
@@ -547,6 +614,9 @@ function allProblems() {
       const pr = slotProblems(s);
       pr.err.forEach(m => list.push({ err: true, msg: `${where}, slot ${i + 1}: ${m}` }));
       pr.warn.forEach(m => list.push({ warn: true, msg: `${where}, slot ${i + 1}: ${m}` }));
+    });
+    Object.entries(pg.qlinks || {}).forEach(([q, n]) => {
+      if (n !== null && params.length && !byName[n]) list.push({ err: true, msg: `${where}, Q-Link ${q}: "${n}" is not in params.json` });
     });
     if (pg.bgTile && !(pg.bgScale >= 1 && pg.bgScale <= 400)) list.push({ err: true, msg: `${where}, background: tile scale must be 1 to 400 %` });
     pg.art.forEach((a, ai) => {
@@ -874,9 +944,52 @@ function renderAll() {
   trackHistory(); updateHistButtons();
   syncSelection();
   $("files").textContent = `params: ${fileNames.params || "none"} · ui: ${fileNames.ui || "none"}`;
-  renderPages(); renderPalette(); renderStage(); renderInspector(); renderWarnings(); renderKit(); renderArtwork(); saveDraft();
+  renderPages(); renderPalette(); renderStage(); renderInspector(); renderWarnings(); renderKit(); renderArtwork(); renderQlinks(); saveDraft();
 }
 
+// The Q-Link grid: one cell per hardware knob, in the screen grid's order (top row Q13..Q16).
+function renderQlinks() {
+  const pg = doc.pages[cur], box = $("qGrid");
+  const names = params.filter(p => p.automatable !== false).map(p => p.name);
+  pg.slots.forEach(sl => { if (sl && sl.param && !names.includes(sl.param)) names.push(sl.param); });
+  Object.values(pg.qlinks).forEach(n => { if (n && !names.includes(n)) names.push(n); });
+  let h = "";
+  for (let i = 0; i < MAX_SLOTS; i++) {
+    const q = qlink(i), set = Object.prototype.hasOwnProperty.call(pg.qlinks, q), auto = autoQ(pg, q);
+    const cur2 = set ? (pg.qlinks[q] === null ? "__none" : pg.qlinks[q]) : "__auto";
+    const opts = [["__auto", `Auto: ${auto || "nothing"}`], ["__none", "none"]].concat(names.map(n => [n, byName[n] || !params.length ? n : n + " (missing)"]));
+    h += `<div class="qcell${set ? " set" : ""}"><b><span>Q${q}</span><span>bank ${bankOf(i)}</span></b>` +
+      `<select data-q="${q}" title="What Q-Link ${q} drives on this page">${opts.map(([v, t]) => `<option value="${esc(v)}" ${v === cur2 ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></div>`;
+  }
+  box.innerHTML = h;
+  document.querySelectorAll('input[name="qBanks"]').forEach(r => { r.checked = r.value === (rowBanks(pg) ? "rows" : "columns"); });
+  $("qAuto").disabled = !Object.keys(pg.qlinks).length;
+}
+$("qGrid").addEventListener("change", e => {
+  const q = Number(e.target.dataset.q); if (!q) return;
+  const pg = doc.pages[cur], v = e.target.value;
+  if (v === "__auto") delete pg.qlinks[q];
+  else pg.qlinks[q] = v === "__none" ? null : v;
+  // A choice that matches what Auto gives is no override at all.
+  if (pg.qlinks[q] !== undefined && pg.qlinks[q] === autoQ(pg, q)) delete pg.qlinks[q];
+  renderAll();
+});
+$("qBanksRow").addEventListener("change", e => {
+  if (e.target.name !== "qBanks") return;
+  doc.pages[cur].qlinkBanks = e.target.value;
+  status(e.target.value === "rows" ? "4-Q-Link models step through this page by rows: bank 1 is the top row (Q13 to Q16)."
+    : "4-Q-Link models step through this page by columns: bank 1 is the left column (Q13, Q9, Q5, Q1).");
+  renderAll();
+});
+$("qAuto").addEventListener("click", () => { doc.pages[cur].qlinks = {}; status("Q-Links follow the slots again on this page."); renderAll(); });
+$("qFollow").addEventListener("click", () => {
+  // Writes down what every Q-Link drives now, so moving controls afterwards leaves the hardware mapping alone.
+  const pg = doc.pages[cur], m = {};
+  for (let q = 1; q <= 16; q++) m[q] = effQ(pg, q);
+  pg.qlinks = m;
+  status("Q-Link mapping pinned: moving controls on this page no longer changes what the knobs drive.");
+  renderAll();
+});
 function renderArtwork() {
   const pg = doc.pages[cur];
   $("bgName").value = pg.background || "";
@@ -1000,13 +1113,23 @@ let libraryDir = null;             // a folder handle, so Refresh can read it ag
 let libraryNeedsPermission = null; // a remembered folder that needs one click to be read again
 const elementDefs = {};            // name -> element.json contents
 
+let libDefs = {};      // the library as read from its folder
+let liveEl = null;     // {name, def}: the element open in the designer, as it is being edited (saved or not)
 function setLibrary(defs, from) {
-  for (const k of Object.keys(elementDefs)) delete elementDefs[k];
-  Object.assign(elementDefs, defs);
-  libraryNames = Object.keys(defs).sort((a, b) => a.localeCompare(b));
+  libDefs = { ...defs };
   libraryFrom = from;
-  const knobs = libraryNames.filter(n => defs[n].type === "knob").length;
-  $("libNote").textContent = `${from}: ${knobs} knob element(s)`;
+  applyDefs();
+}
+// The elements the layout draws: the library, with the designer's open element on top while it differs.
+function applyDefs() {
+  const live = liveEl && JSON.stringify(libDefs[liveEl.name]) !== JSON.stringify(liveEl.def) ? liveEl : null;
+  for (const k of Object.keys(elementDefs)) delete elementDefs[k];
+  Object.assign(elementDefs, libDefs, live ? { [live.name]: live.def } : {});
+  libraryNames = Object.keys(elementDefs).sort((a, b) => a.localeCompare(b));
+  if (!libraryFrom) libraryFrom = "the element designer";
+  const knobs = libraryNames.filter(n => elementDefs[n].type === "knob").length;
+  $("libNote").textContent = `${libraryFrom}: ${knobs} knob element(s)` +
+    (live ? ` · showing ${live.name} as edited in the designer${libDefs[live.name] ? " (not saved yet)" : " (not in the library yet)"}` : "");
   renderAll();
 }
 const readJsonFile = async f => JSON.parse(await f.text());
@@ -1083,8 +1206,240 @@ async function refreshLibrary() {
   if (libraryFrom === "ui-library") { try { await libraryFromServer(); status("Element library refreshed."); return; } catch (e) { /* fall through */ } }
   chooseLibrary();
 }
+// Keeping up with the element designer: when this page comes back into view (or the designer says it saved),
+// the library is read again quietly, and the layout re-drawn only if an element changed.
+async function readLibraryQuietly() {
+  const defs = {};
+  if (libraryDir) {
+    if ((await libraryDir.queryPermission({ mode: "read" })) !== "granted") return null;
+    for await (const [name, h] of libraryDir.entries()) {
+      if (h.kind !== "directory") continue;
+      try { defs[name] = await readJsonFile(await (await h.getFileHandle("element.json")).getFile()); } catch (e) { /* not an element folder */ }
+    }
+  } else if (libraryFrom === "ui-library") {
+    const r = await fetch("../ui-library/", { cache: "no-store" });
+    if (!r.ok) return null;
+    const names = [...new Set([...(await r.text()).matchAll(/href="([^"?#\/][^"?#]*)\/"/g)].map(m => decodeURIComponent(m[1])))];
+    await Promise.all(names.map(async n => {
+      try { const q = await fetch("../ui-library/" + encodeURIComponent(n) + "/element.json", { cache: "no-store" }); if (q.ok) defs[n] = await q.json(); }
+      catch (e) { /* not an element folder */ }
+    }));
+  } else return null;   // no library, or the older folder picker (it cannot be read again without choosing it)
+  return Object.keys(defs).length ? defs : null;
+}
+let libraryChecking = false;
+async function followLibrary() {
+  if (libraryChecking || libraryNames === null) return;
+  libraryChecking = true;
+  try {
+    const defs = await readLibraryQuietly();
+    if (!defs) return;
+    const changed = Object.keys({ ...defs, ...libDefs }).filter(n => JSON.stringify(defs[n]) !== JSON.stringify(libDefs[n]));
+    if (!changed.length) return;
+    setLibrary(defs, libraryFrom);
+    status(`Element library updated: ${changed.slice(0, 4).join(", ")}${changed.length > 4 ? ` and ${changed.length - 4} more` : ""}.`);
+  } catch (e) { /* the folder went away; ↻ or Choose reaches it again */ }
+  finally { libraryChecking = false; }
+}
+window.addEventListener("focus", followLibrary);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) followLibrary(); });
+// The designer sends the saved element itself (BroadcastChannel, and a localStorage note for pages opened from
+// files, where the channel may not reach): it is drawn at once, then the library is read again to be sure.
+function takeSavedElement(m) {
+  if (!m || typeof m.name !== "string" || !m.name || !m.def || typeof m.def !== "object") return;
+  if (liveEl && liveEl.name === m.name && JSON.stringify(liveEl.def) === JSON.stringify(m.def)) return;
+  liveEl = { name: m.name, def: m.def };
+  applyDefs();
+}
+// t is set on the note sent after a save: only then is the library read again.
+try { new BroadcastChannel("mpc-ui-library").onmessage = e => { takeSavedElement(e.data); if (e.data && e.data.t) followLibrary(); }; } catch (e) { /* focus still covers it */ }
+// "mpc-ui-designer-live": the designer's open element on every change; "mpc-ui-library-saved": after a save.
+// Pages opened from files share this storage, so this works without a server and without the channel.
+window.addEventListener("storage", e => {
+  if ((e.key !== "mpc-ui-library-saved" && e.key !== "mpc-ui-designer-live") || !e.newValue) return;
+  try { takeSavedElement(JSON.parse(e.newValue)); } catch (err) { /* not ours */ }
+  if (e.key === "mpc-ui-library-saved") followLibrary();
+});
+// While this page is on screen, look at the library every few seconds (side-by-side windows never change focus).
+setInterval(() => { if (!document.hidden) followLibrary(); }, 3000);
+// ---------- page templates ----------
+// ui-pages/<name>.json: {"format": 1, "name": ..., "page": <one page as in ui.json>}. A template keeps parameter
+// names as they are; on a plugin without them those slots show in Checks, ready to be pointed at its own parameters.
+let tplDir = null;        // folder handle (read and write), or null
+let tplPending = null;    // a folder remembered from last time that needs one click
+let tplServed = false;    // listed from the repo's ui-pages/ over HTTP (read only)
+let templates = [];       // [{name, file, page, note}]
+const TPL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,47}$/;
+// A template file: {"page": one page} or {"layout": a whole ui.json (pages, kit, style ...)}.
+function tplOf(j, file) {
+  if (!j || typeof j !== "object") return null;
+  const name = String(j.name || file.replace(/\.json$/i, ""));
+  if (j.layout && Array.isArray(j.layout.pages) && j.layout.pages.length) return { name, file, layout: j.layout };
+  if (j.page && typeof j.page === "object") return { name, file, page: j.page };
+  return null;
+}
+const ctlCount = pg => Array.isArray(pg && pg.controls) ? pg.controls.filter(c => c && (typeof c === "string" || (c.widget !== "empty" && (c.param || c.widget === "text")))).length : 0;
+async function readTemplatesFromDir(dir) {
+  const out = [];
+  for await (const [file, h] of dir.entries()) {
+    if (h.kind !== "file" || !/\.json$/i.test(file)) continue;
+    try { const j = JSON.parse(await (await h.getFile()).text()); const t = tplOf(j, file); if (t) out.push(t); }
+    catch (e) { /* not a template */ }
+  }
+  return out;
+}
+async function readTemplatesFromServer() {
+  const r = await fetch("../ui-pages/", { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const files = [...new Set([...(await r.text()).matchAll(/href="([^"?#\/]+\.json)"/gi)].map(m => decodeURIComponent(m[1])))];
+  const out = [];
+  await Promise.all(files.map(async f => {
+    try { const j = await (await fetch("../ui-pages/" + encodeURIComponent(f), { cache: "no-store" })).json(); const t = tplOf(j, f); if (t) out.push(t); }
+    catch (e) { /* not a template */ }
+  }));
+  return out;
+}
+async function loadTemplates() {
+  try {
+    if (tplDir) templates = await readTemplatesFromDir(tplDir);
+    else if (tplServed) templates = await readTemplatesFromServer();
+    else templates = [];
+  } catch (e) { templates = []; }
+  templates.sort((a, b) => a.name.localeCompare(b.name));
+  renderTemplates();
+}
+async function chooseTemplateFolder() {
+  if (!window.showDirectoryPicker) { status("This browser cannot open a folder for templates; use Chrome or Edge.", true); return false; }
+  try {
+    const dir = await showDirectoryPicker({ id: "uipages", mode: "readwrite" });
+    tplDir = dir; tplPending = null; tplServed = false;
+    try { await idbPut("pages", dir); } catch (e) { /* not remembered */ }
+    await loadTemplates(); status(`Page templates: ${dir.name}`);
+    return true;
+  } catch (e) { if (e.name !== "AbortError") status("Templates folder: " + e.message, true); return false; }
+}
+async function reconnectTemplates() {
+  const dir = tplPending; if (!dir) return chooseTemplateFolder();
+  try {
+    if ((await dir.requestPermission({ mode: "readwrite" })) !== "granted") return false;
+    tplDir = dir; tplPending = null; tplServed = false; await loadTemplates(); return true;
+  } catch (e) { status("Templates folder: " + e.message, true); return false; }
+}
+function renderTemplates() {
+  const st = $("tplState");
+  st.textContent = tplDir ? `Folder: ${tplDir.name}${tplDir.served ? " in the repo" : ""}. Pages and layouts to reuse in any plugin.`
+    : tplPending ? `Not connected to ${tplPending.name}: the browser asks once per visit.`
+    : tplServed ? "From the repo's ui-pages folder (read only here; Save asks for the folder)."
+    : "Choose the repo's ui-pages folder to save and reuse pages.";
+  $("tplFolder").textContent = tplPending ? `Reconnect ${tplPending.name}` : tplDir ? "Change folder…" : "Templates folder…";
+  const box = $("tplList");
+  if (!templates.length) { box.innerHTML = (tplDir || tplServed) ? '<div class="note">No templates yet. Save a page or the whole layout to start.</div>' : ""; return; }
+  const row = (t, i) => {
+    const missing = params.length ? tplMissing(t).length : 0;
+    const miss = missing ? ` · ${missing} not in this plugin` : "";
+    if (t.layout) {
+      const n = t.layout.pages.length, ctls = t.layout.pages.reduce((a, pg) => a + ctlCount(pg), 0);
+      return `<div class="tpl layout"><div class="tn"><span>${esc(t.name)}</span><small>${n} page${n === 1 ? "" : "s"} · ${ctls} control${ctls === 1 ? "" : "s"}${miss}</small></div>` +
+        `<div class="row"><button data-tpl="layout" data-i="${i}" title="Replace the whole layout (every page, kit and style) with it">Use this layout</button><button data-tpl="addpages" data-i="${i}" title="Add its pages after the current page, keeping this layout's kit and style">Add its pages</button></div></div>`;
+    }
+    const ctls = ctlCount(t.page);
+    return `<div class="tpl"><div class="tn"><span>${esc(t.name)}</span><small>${ctls} control${ctls === 1 ? "" : "s"}${miss}</small></div>` +
+      `<div class="row"><button data-tpl="add" data-i="${i}" title="Add it after the current page">Add as new page</button><button data-tpl="replace" data-i="${i}" title="Replace the page on the screen with it">Replace this page</button></div></div>`;
+  };
+  const lays = templates.map((t, i) => [t, i]).filter(([t]) => t.layout), pgs = templates.map((t, i) => [t, i]).filter(([t]) => !t.layout);
+  box.innerHTML = (lays.length ? `<div class="tplhead">Layouts</div>` + lays.map(([t, i]) => row(t, i)).join("") : "") +
+    (pgs.length ? `<div class="tplhead">Pages</div>` + pgs.map(([t, i]) => row(t, i)).join("") : "");
+}
+// The parameter names a template page uses that this plugin's params.json does not have.
+function tplMissing(t) {
+  const names = new Set();
+  const pages = t.layout ? t.layout.pages : t.page ? [t.page] : [t];
+  pages.forEach(page => {
+  (page.controls || []).forEach(c => { const n = typeof c === "string" ? c : c && c.param; if (n && n.toLowerCase() !== "empty") names.add(n); });
+  Object.values(page.qlinks || {}).forEach(n => { if (n) names.add(n); });
+  });
+  return [...names].filter(n => !byName[n]);
+}
+async function saveTemplate(whole) {
+  if (!tplDir) { if (!(tplPending ? await reconnectTemplates() : await chooseTemplateFolder())) return; }
+  const pg = doc.pages[cur];
+  const suggest = whole ? "My layout" : pg.name;
+  const name = (prompt(whole ? `Layout template name (all ${doc.pages.length} pages; letters, digits, space, - _ .):` : "Page template name (letters, digits, space, - _ .):", suggest) || "").trim();
+  if (!name) return;
+  if (!TPL_NAME_RE.test(name)) { status("Template names use letters, digits, spaces and - _ . (up to 48).", true); return; }
+  const file = name.replace(/\s+/g, "-") + ".json";
+  const exists = await tplDir.getFileHandle(file).then(() => true, () => false);
+  if (exists && !confirm(`There is already a template "${name}". Replace it?`)) return;
+  try {
+    const h = await tplDir.getFileHandle(file, { create: true });
+    const w = await h.createWritable();
+    const body = whole ? { format: 1, name, layout: exportUi() } : { format: 1, name, page: pageToJson(pg) };
+    await w.write(JSON.stringify(body, null, 2) + "\n"); await w.close();
+    status(whole ? `Saved the whole layout (${doc.pages.length} pages) as template ${name}.` : `Saved page "${pg.name}" as template ${name}.`);
+    await loadTemplates();
+  } catch (e) { status("Saving the template failed: " + e.message, true); }
+}
+function useTemplate(i, how) {
+  const t = templates[i]; if (!t) return;
+  if (t.layout) return useLayoutTemplate(t, how);
+  loadNotes = [];
+  const page = pageFromJson(t.page, cur);
+  const missing = tplMissing(t);
+  if (how === "add") {
+    if (doc.pages.length >= MAX_PAGES) { status(`A layout has at most ${MAX_PAGES} pages.`, true); return; }
+    doc.pages.splice(cur + 1, 0, page); cur = cur + 1;
+  } else {
+    if (doc.pages[cur].slots.some(Boolean) && !confirm(`Replace page "${doc.pages[cur].name}" with template ${t.name}? (Undo brings it back.)`)) return;
+    doc.pages[cur] = page;
+  }
+  sel = null; multi.clear(); grpSel = -1; artSel = -1;
+  status(`Template ${t.name} ${how === "add" ? "added as a new page" : "placed on this page"}.` +
+    (missing.length ? ` ${missing.length} parameter(s) are not in this plugin (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}); see Checks.` : ""), missing.length > 0);
+  renderAll();
+}
+// A whole-layout template: replace everything ("layout"), or add its pages after the current one ("addpages").
+function useLayoutTemplate(t, how) {
+  let d;
+  try { d = parseUi(JSON.stringify(t.layout)); } catch (e) { status(`Template ${t.name} could not be read: ${e.message}`, true); return; }
+  const missing = tplMissing(t);
+  if (how === "layout") {
+    const used = doc.pages.some(pg => pg.slots.some(Boolean));
+    if (used && !confirm(`Replace the whole layout (${doc.pages.length} page${doc.pages.length === 1 ? "" : "s"}) with template ${t.name}? (Undo brings it back.)`)) return;
+    doc = d; cur = 0;
+  } else {
+    const room = MAX_PAGES - doc.pages.length;
+    if (room <= 0) { status(`A layout has at most ${MAX_PAGES} pages.`, true); return; }
+    const add = d.pages.slice(0, room);
+    doc.pages.splice(cur + 1, 0, ...add); cur = cur + 1;
+    if (add.length < d.pages.length) loadNotes.push(`Only ${add.length} of the template's ${d.pages.length} pages fit (at most ${MAX_PAGES}).`);
+  }
+  sel = null; multi.clear(); grpSel = -1; artSel = -1;
+  status(`Template ${t.name}: ${how === "layout" ? `layout of ${d.pages.length} page(s) opened` : "pages added after the current page"}.` +
+    (missing.length ? ` ${missing.length} parameter(s) are not in this plugin (${missing.slice(0, 3).join(", ")}${missing.length > 3 ? "…" : ""}); see Checks.` : "") +
+    (loadNotes.length ? " " + loadNotes.join(" ") : ""), missing.length > 0 || loadNotes.length > 0);
+  renderAll();
+}
+$("tplSave").addEventListener("click", () => saveTemplate(false));
+$("tplSaveAll").addEventListener("click", () => saveTemplate(true));
+$("tplFolder").addEventListener("click", () => tplPending ? reconnectTemplates() : chooseTemplateFolder());
+$("tplRefresh").addEventListener("click", loadTemplates);
+$("tplList").addEventListener("click", e => { const b = e.target.closest("[data-tpl]"); if (b) useTemplate(Number(b.dataset.i), b.dataset.tpl); });
+async function startTemplates() {
+  if (await UISERVER.available()) { tplDir = UISERVER.dir("ui-pages"); tplPending = null; tplServed = false; await loadTemplates(); return; }
+  try { await readTemplatesFromServer(); tplServed = true; } catch (e) { /* not served from the repo */ }
+  try {
+    const dir = await idbGet("pages");
+    if (dir && dir.queryPermission) {
+      if ((await dir.queryPermission({ mode: "readwrite" })) === "granted") { tplDir = dir; tplServed = false; }
+      else if (!tplServed) tplPending = dir;
+    }
+  } catch (e) { /* storage unavailable */ }
+  await loadTemplates();
+}
 // On start: the server's folder, else the folder remembered from last time.
 async function startLibrary() {
+  // Opened from tools/ui_server.py: the repo's ui-library through the server, like a folder that never needs reconnecting.
+  try { if (await UISERVER.available() && await libraryFromHandle(UISERVER.dir("ui-library"))) return; } catch (e) { /* fall back */ }
   try { await libraryFromServer(); return; } catch (e) { /* not served from the repo */ }
   try {
     const dir = await idbGet("library");
@@ -1190,6 +1545,52 @@ function artHtml(s) {
 let devOn = true, devSize = false;
 try { const v = JSON.parse(localStorage.getItem("mpc-ui-editor-view") || "{}"); devOn = v.devOn !== false; devSize = !!v.devSize; } catch (e) { /* defaults */ }
 const FONT_EM = 1.521;   // Titillium Web: ascent + descent per em. The skin gives font heights (px), CSS wants em size.
+// The MPC's fonts (docs/ui-reference.md 1.5) and how the preview shows them. Nexa is not a web font, so the preview
+// uses a stand-in; the MPC draws the real one.
+const MPC_FONTS = ["Titillium Web", "Roboto", "Nexa"];
+const MPC_FONT_STYLES = ["Thin", "ThinItalic", "Light", "LightItalic", "Book", "BookItalic", "Regular", "Italic", "Medium",
+                         "SemiBold", "SemiBoldItalic", "Bold", "BoldItalic", "Black"];
+const FONT_CSS = { "Titillium Web": "'Titillium Web',system-ui,sans-serif", "Roboto": "'Roboto',system-ui,sans-serif",
+                   "Nexa": "'Nexa','Montserrat','Century Gothic',system-ui,sans-serif" };
+const FONT_EMS = { "Titillium Web": FONT_EM, "Roboto": 1.172, "Nexa": 1.2 };   // per-font ascent + descent (Nexa's is a guess)
+const styleCss = st => `font-weight:${/Thin/.test(st) ? 100 : /Light/.test(st) ? 300 : /SemiBold/.test(st) ? 600 : /Bold/.test(st) ? 700 : /Black/.test(st) ? 900 : 400};` +
+  `font-style:${/Italic/.test(st) ? "italic" : "normal"};`;
+// Name style: the widgets whose name the generator draws, and the slot keys it uses (as tools/gen_ui.py labelStyle).
+const LS_WIDGETS = ["knob", "fader", "switch", "button"];
+const LS_KEY = { Font: "font", Style: "style", Size: "size", Align: "align", Dx: "dx", Dy: "dy" };
+// Sets one name-style setting on a slot; a blank value goes back to the default.
+function setNameStyle(sl, key, raw) {
+  const ls = { ...(sl.labelStyle || {}) };
+  if (key === "font" || key === "style" || key === "align") { if (raw) ls[key] = raw; else delete ls[key]; }
+  else if (key === "size") { const n = Math.round(Number(raw)); if (raw !== "" && n >= 8 && n <= 60) ls.size = n; else delete ls.size; }
+  else if (key === "dx" || key === "dy") {
+    const lim = key === "dx" ? SW : SH, n = Math.round(Number(raw));
+    if (raw !== "" && isFinite(n) && n) ls[key] = Math.max(-lim, Math.min(lim, n)); else delete ls[key];
+  }
+  if (Object.keys(ls).length) sl.labelStyle = ls; else delete sl.labelStyle;
+}
+// The Name style rows of the Inspector. v: the current settings (undefined = default, null = mixed across a selection).
+function nameStyleRows(v, pre, multiMode) {
+  const sel = (f, label, opts, cur) => {
+    const o = [];
+    if (cur === null) o.push('<option value="" selected>(mixed)</option>');
+    o.push(`<option value="__def" ${cur === undefined ? "selected" : ""}>default</option>`);
+    for (const x of opts) o.push(`<option value="${esc(x)}" ${x === cur ? "selected" : ""}>${esc(x)}</option>`);
+    return `<div class="row"><label>${label}</label><select data-f="${pre}${f}">${o.join("")}</select></div>`;
+  };
+  const num = (f, cur, min, max, ph) =>
+    `<input data-f="${pre}${f}" type="number" min="${min}" max="${max}" step="1" value="${cur === null || cur === undefined ? "" : cur}" placeholder="${cur === null ? "mixed" : ph}" style="width:72px;flex:none">`;
+  let h = `<div class="note" style="margin-top:10px;color:var(--text)">Name style</div>`;
+  h += sel("Font", "Font", MPC_FONTS, v.font) + sel("Style", "Style", MPC_FONT_STYLES, v.style);
+  h += `<div class="row"><label>Size</label>${num("Size", v.size, 8, 60, "auto")}<span class="note" style="margin:0">px</span></div>`;
+  h += sel("Align", "Align", ["left", "centre", "right"], v.align);
+  h += `<div class="row"><label>Move</label><span class="note" style="margin:0">X</span>${num("Dx", v.dx, -SW, SW, "0")}` +
+       `<span class="note" style="margin:0">Y</span>${num("Dy", v.dy, -SH, SH, "0")}</div>`;
+  h += `<div class="row"><button data-f="${pre}Reset">Reset name style</button></div>`;
+  h += `<div class="note">${multiMode ? "Applies to every selected knob, fader, switch and button." : "Drag the name on the screen to move it (device view). A knob's name spans the slot: drop it in the left, middle or right third, or use Align."} ` +
+       `The MPC has three fonts; Nexa shows here with a stand-in, the MPC draws the real one.</div>`;
+  return h;
+}
 const SEG_W = { 2: 122, 3: 80, 4: 58 };
 // Same layout as gen_ui.py knob_stacked(): name centred above the knob, value centred on it.
 function knobStacked(size, M, T, name, val, drawKnob, valSize = 22) {
@@ -1197,7 +1598,7 @@ function knobStacked(size, M, T, name, val, drawKnob, valSize = 22) {
   const nameFont = Math.max(14, Math.min(26, Math.round(band * 0.92)));
   return drawKnob(x, band) +
     devLabel(0, 0, SW, band, nameFont, M, name, "centre", true) +
-    devLabel(x, band + Math.floor(size / 2) - 16, size, 32, valSize, T, val, "centre");
+    devLabel(x, band + Math.floor(size / 2) - Math.floor(UIEL.valueBoxH(valSize) / 2), size, UIEL.valueBoxH(valSize), valSize, T, val, "centre");
 }
 function argbCss(v) { const n = parseInt(v, 16); return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${(((n >>> 24) & 255) / 255).toFixed(3)})`; }
 function styleColour(key) {
@@ -1217,14 +1618,31 @@ function setSlotName(s, text) {
   else s.label = t;
 }
 // editable: a parameter-name label that double-click can rename in device view (data-lbl marks it).
+let nameStyleNow = null;   // the labelStyle of the control devHtml is drawing; applied to its name label
 function devLabel(x, y, w, h, height, colour, text, just, editable) {
+  let fam = FONT_CSS["Titillium Web"], em = FONT_EM, weight = "", drag = "";
+  const ls = editable ? nameStyleNow : null;
+  if (ls) {   // the same rules as tools/gen_ui.py restyle_name()
+    const bx = x, by = y;
+    if (ls.font) { fam = FONT_CSS[ls.font] || fam; em = FONT_EMS[ls.font] || FONT_EM; }
+    if (ls.style) weight = styleCss(ls.style);
+    if (ls.align) just = ls.align;
+    if (ls.size) { height = ls.size; h = Math.min(SH, Math.max(h, Math.ceil(ls.size * 1.3))); }
+    x = Math.max(0, Math.min(SW - w, x + (ls.dx || 0)));
+    y = Math.max(0, Math.min(SH - h, y + (ls.dy || 0)));
+    drag = ` data-bx="${bx}" data-by="${by}" data-w="${w}" data-h="${h}"`;
+  } else if (editable && nameStyleNow !== false) {
+    drag = ` data-bx="${x}" data-by="${y}" data-w="${w}" data-h="${h}"`;
+  }
   const jc = just === "right" ? "flex-end" : just === "centre" ? "center" : "flex-start";
-  return `<div${editable ? ' data-lbl="1"' : ""} style="${artPos(x, y, w, h, `display:flex;align-items:center;justify-content:${jc};font-family:'Titillium Web',system-ui,sans-serif;` +
-    `font-size:${px((height / FONT_EM).toFixed(2))};line-height:1;color:${colour};white-space:nowrap;overflow:hidden;` +
+  return `<div${editable ? ' data-lbl="1"' : ""}${drag} style="${artPos(x, y, w, h, `display:flex;align-items:center;justify-content:${jc};font-family:${fam};${weight}` +
+    `font-size:${px((height / em).toFixed(2))};line-height:1;color:${colour};white-space:nowrap;overflow:hidden;` +
     (editable ? "pointer-events:auto;cursor:text" : "pointer-events:none"))}">${esc(text)}</div>`;
 }
 const devBox = (x, y, w, h, css) => `<div style="${artPos(x, y, w, h, css + ";pointer-events:none")}"></div>`;
 function devHtml(s) {
+  // Name labels of the widgets the generator draws take the slot's labelStyle (false: no style, not draggable).
+  nameStyleNow = LS_WIDGETS.includes(s.widget) ? (s.labelStyle || null) : false;
   const T = styleColour("text"), M = styleColour("muted");
   if (s.widget === "empty") return "";
   if (s.widget === "text") return devLabel(0, 0, SW, SH, 30, T, s.text);
@@ -1283,7 +1701,7 @@ function devHtml(s) {
 function slotHtml(s, i) {
   if (devOn) return devHtml(s);
   const plot = s.widget === "plotter";
-  const q = plot ? "" : `<span class="q">Q${qlink(i)}</span>`;   // plotters have no hardware knob
+  const q = plot ? "" : qBadge(i);   // plotters have no hardware knob
   if (s.widget === "text") return q + `<div class="textw">${esc(s.text)}</div>`;
   if (plot) return `<div class="nm" data-lbl="1">${esc(plainName(s))}</div><div class="gfx"><div class="plot"></div></div>`;
   if (s.widget === "empty") return q + `<div class="wd">spacer</div>`;
@@ -1329,6 +1747,15 @@ function editText(lb, start, commit) {
   const sel2 = window.getSelection(); sel2.removeAllRanges(); sel2.addRange(r);
 }
 
+// The Q badge of a slot: its own Q-Link normally; the Q-Links that drive it when the page's map moved them.
+function qBadge(i) {
+  const pg = doc.pages[cur], sl = pg.slots[i];
+  if (!sl || !sl.param) return `<span class="q">Q${qlink(i)}</span>`;
+  const qs = qsFor(pg, i);
+  if (qs.length === 1 && qs[0] === qlink(i)) return `<span class="q">Q${qlink(i)}</span>`;
+  if (!qs.length) return `<span class="q none" title="No Q-Link drives this control on this page (see Q-Links below the screen)">no Q</span>`;
+  return `<span class="q moved" title="Driven by Q-Link ${qs.join(", ")} (set in Q-Links below the screen)">Q${qs.join(" Q")}</span>`;
+}
 function renderStage() {
   const pg = doc.pages[cur];
   $("stageTitle").textContent = `Screen: page ${cur + 1} "${pg.name}"`;
@@ -1339,7 +1766,7 @@ function renderStage() {
   $("devTop").hidden = $("devTabs").hidden = !devOn;
   $("stageNote").textContent = devOn
     ? "Controls are drawn at the positions, text sizes and colours the generator writes for the MPC, at their default values. The header, tab bar, plain slider bars and plotter traces are drawn by the MPC itself, so those are stand-ins. Click a slot to select it; the highlight is the MPC's focus frame. Double-click a name to change the text the MPC shows. Drag a box on empty screen, or Shift/Ctrl-click, to select several controls, then Group them."
-    : "Each box is one touch-screen slot at the position the generator uses. Dashed frames are Q-Link banks: the four slots in one column are the group the hardware knobs control together. Q numbers show which hardware knob drives each slot.";
+    : "Each box is one touch-screen slot at the position the generator uses. Dashed frames are Q-Link banks: the four slots in one column (or one row, if the page banks by rows) are the group the hardware knobs control together. Q numbers show which hardware knob drives each slot.";
   const st = $("stage"); dev.style.setProperty("--s", (st.clientWidth || TW) / TW);
   if (devOn) {
     const tabs = $("devTabs"); tabs.innerHTML = "";
@@ -1397,10 +1824,11 @@ function renderStage() {
     if (gr) pos(gr, g.w - 14, g.h - 14, 14, 14, g.w, g.h);
     cv.appendChild(d);
   });
-  if (!devOn) BANKS.forEach((b, c) => {
+  if (!devOn) (rowBanks(pg) ? ROW_BANKS : BANKS).forEach((b, c) => {
     const d = el("div", "bank");
     pos(d, b[0], b[1], b[2], b[3], TW, TH);
-    const sp = el("span"); sp.textContent = `Bank ${c + 1} · Q-Link ${[1, 5, 9, 13].map(n => n + c).join(" ")}`;
+    const qs = rowBanks(pg) ? [0, 1, 2, 3].map(k => 13 - 4 * c + k) : [13, 9, 5, 1].map(n => n + c);
+    const sp = el("span"); sp.textContent = `Bank ${c + 1} · Q-Link ${qs.join(" ")}`;
     d.appendChild(sp); cv.appendChild(d);
   });
   for (let i = 0; i < MAX_SLOTS; i++) {
@@ -1418,12 +1846,23 @@ function renderStage() {
       sel = i; artSel = -1; grpSel = -1;
       paintSelection();
     });
+    d.addEventListener("pointerdown", e => {
+      // Device view: a selected control's name can be dragged to a new place in its slot.
+      if (!devOn || !s || !LS_WIDGETS.includes(s.widget) || sel !== i || multi.size > 1 || e.button !== 0) return;
+      const lb = e.target.closest && e.target.closest("[data-bx]");
+      if (!lb) return;
+      const ls = s.labelStyle || {};
+      nameDrag = { s, lb, d, sx: e.clientX, sy: e.clientY, moved: false, bx: +lb.dataset.bx, by: +lb.dataset.by, w: +lb.dataset.w, h: +lb.dataset.h,
+                   dx0: ls.dx || 0, dy0: ls.dy || 0, dx: ls.dx || 0, dy: ls.dy || 0, align: null };
+      d.draggable = false;   // the name moves, not the slot
+      try { lb.setPointerCapture(e.pointerId); } catch (err) { /* synthetic events: no active pointer */ }
+    });
     d.addEventListener("dblclick", e => {
       const lb = e.target.closest && e.target.closest("[data-lbl]");
       if (s && lb) { e.preventDefault(); editLabel(lb, d, i); }
     });
     d.addEventListener("dragstart", e => {
-      if (!s) { e.preventDefault(); return; }
+      if (!s || nameDrag) { e.preventDefault(); return; }
       // Dragging a slot that is part of a multi-selection carries the whole selection.
       const picked = [...multi].filter(j => doc.pages[cur].slots[j]).sort((a, b) => a - b);
       dragPayload = multi.size > 1 && multi.has(i) && picked.length > 1 ? { froms: picked, page: cur } : { from: i, page: cur };
@@ -1436,6 +1875,115 @@ function renderStage() {
   }
 }
 
+// ---------- dragging a control's name (device view) ----------
+// The name moves inside its slot. A knob's name spans the slot's width, so sideways it snaps to the third it is
+// dropped in (left, centre, right) instead of moving by pixels.
+let nameDrag = null;
+document.addEventListener("pointermove", e => {
+  const g = nameDrag; if (!g) return;
+  const r = canvasRect();
+  const mx = (e.clientX - g.sx) / r.width * TW, my = (e.clientY - g.sy) / r.height * TH;
+  if (!g.moved && Math.hypot(mx, my) < 3) return;   // a click (or the start of a double-click), not a drag
+  g.moved = true;
+  const x = Math.max(0, Math.min(SW - g.w, g.bx + g.dx0 + Math.round(mx)));
+  const y = Math.max(0, Math.min(SH - g.h, g.by + g.dy0 + Math.round(my)));
+  g.dx = x - g.bx; g.dy = y - g.by;
+  if (g.w >= SW && Math.abs(mx) > 10) {
+    const sr = g.d.getBoundingClientRect(), fx = (e.clientX - sr.left) / sr.width;
+    g.align = fx < 1 / 3 ? "left" : fx > 2 / 3 ? "right" : "centre";
+    g.lb.style.justifyContent = g.align === "left" ? "flex-start" : g.align === "right" ? "flex-end" : "center";
+  }
+  g.lb.style.left = px(x); g.lb.style.top = px(y);
+});
+function endNameDrag() {
+  const g = nameDrag; if (!g) return;
+  nameDrag = null; g.d.draggable = true;
+  if (!g.moved) return;
+  setNameStyle(g.s, "dx", String(g.dx));
+  setNameStyle(g.s, "dy", String(g.dy));
+  if (g.align) setNameStyle(g.s, "align", g.align);
+  status(`Name moved to x ${g.dx >= 0 ? "+" : ""}${g.dx}, y ${g.dy >= 0 ? "+" : ""}${g.dy}${g.align ? ", " + g.align : ""}.`);
+  renderAll();
+}
+document.addEventListener("pointerup", endNameDrag);
+document.addEventListener("pointercancel", endNameDrag);
+// Changes a slot's widget, keeping its other settings consistent (overlay, plotter range, polarity).
+function setWidget(s, v) {
+  s.widget = v;
+  if (v === "plotter") { delete s.overlay; if (s.min === undefined) s.min = 0; if (s.max === undefined) s.max = 1; }
+  else { delete s.min; delete s.max; }
+  if (s.param && v !== "plotter") s.overlay = (v === "switch" || isDiscrete(byName[s.param])) ? "menu" : "knob";
+  else if (v === "text" && !s.text) s.text = "HEADING";
+  if (v !== "knob" && v !== "fader") delete s.polarity;
+}
+// Several controls selected: the settings they share. A change applies to every selected control it fits
+// (an element only to knobs, a polarity only to knobs and faders); "(mixed)" means they differ and stay as they are.
+function multiInspector() {
+  const pg = doc.pages[cur];
+  const slots = [...multi].sort((a, b) => a - b).map(i => pg.slots[i]).filter(sl => sl && sl.param);
+  const knobs = slots.filter(sl => sl.widget === "knob");
+  const knobFader = slots.filter(sl => sl.widget === "knob" || sl.widget === "fader");
+  const moving = slots.filter(sl => sl.widget === "knob" || sl.widget === "fader" || sl.widget === "switch");
+  const named = slots.filter(sl => sl.widget !== "slider");
+  const overlaid = slots.filter(sl => sl.widget !== "plotter");
+  const same = vals => (vals.length && vals.every(v => v === vals[0])) ? vals[0] : null;
+  const pick = (f, label, opts, current, applies) => {
+    const o = (current === null ? ['<option value="" selected>(mixed)</option>'] : [])
+      .concat(opts.map(([v, t]) => `<option value="${esc(v)}" ${v === current ? "selected" : ""}>${esc(t)}</option>`));
+    return `<div class="row"><label>${label}</label><select data-f="${f}" title="Applies to ${esc(applies)}">${o.join("")}</select></div>`;
+  };
+  let h = `<div class="note">${multi.size} controls selected. Shift-click adds, Ctrl-click removes, or drag a box around them. A change here applies to every selected control it fits.</div>`;
+  h += `<div class="row"><button data-f="selKnobs" title="Select every knob on this page">Select all knobs</button><button data-f="mclr" style="margin-left:auto">Deselect</button></div>`;
+  if (slots.length) h += pick("m_widget", "Widget", ["knob", "fader", "switch", "slider", "plotter"].map(w => [w, w]), same(slots.map(sl => sl.widget)), `${slots.length} controls`);
+  if (knobs.length) {
+    if (libraryNames === null) h += elementField({});   // the button that reaches the library
+    else {
+      const names = libraryNames.filter(n => elementDefs[n].type === "knob");
+      const curEl = same(knobs.map(sl => sl.element || "__kit"));
+      const opts = [["__kit", "kit knob"]].concat(names.map(n => [n, n]));
+      if (curEl && curEl !== "__kit" && !names.includes(curEl)) opts.push([curEl, curEl + " (missing)"]);
+      h += pick("m_element", "Element", opts, curEl, `${knobs.length} knob(s)`) +
+        `<div class="note" style="margin-top:-2px">Element: applies to the ${knobs.length} selected knob${knobs.length === 1 ? "" : "s"}.</div>`;
+    }
+  }
+  if (named.length) h += pick("m_showname", "Name", [["show", "shown on the MPC"], ["hide", "hidden"]], same(named.map(sl => sl.label === "" ? "hide" : "show")), `${named.length} controls`);
+  const styled = slots.filter(sl => LS_WIDGETS.includes(sl.widget));
+  if (styled.length) {
+    const lsv = k => { const vals = styled.map(sl => (sl.labelStyle || {})[k]); return vals.every(x => x === vals[0]) ? vals[0] : null; };
+    h += nameStyleRows({ font: lsv("font"), style: lsv("style"), size: lsv("size"), align: lsv("align"), dx: lsv("dx"), dy: lsv("dy") }, "m_ls", true);
+  }
+  if (overlaid.length) h += pick("m_overlay", "Overlay", [["knob", "knob"], ["menu", "menu"]], same(overlaid.map(sl => sl.overlay)), `${overlaid.length} controls`);
+  if (knobFader.length) h += pick("m_polarity", "Polarity", [["auto", "auto"], ["unipolar", "unipolar"], ["bipolar", "bipolar"]], same(knobFader.map(sl => sl.polarity || "auto")), `${knobFader.length} knobs and faders`);
+  if (moving.length) {
+    const pv = previewOf(moving[0], byName[moving[0].param] || {});
+    h += `<div class="row"><label>Preview</label><input data-f="m_preview" type="range" min="0" max="1" step="0.01" value="${pv}" title="Draws them all at this position. Not saved to ui.json."></div>`;
+  }
+  h += `<div class="row" style="margin-top:10px"><button class="primary" data-f="mkgrp">Group these</button><span class="note" style="margin:0">Ctrl+G</span><button data-f="mdel" style="margin-left:auto">Clear them</button></div>`;
+  return h;
+}
+// Applies one setting from the multiple Inspector to every selected control it fits.
+function applyMulti(f, v) {
+  if (f.startsWith("m_ls") && LS_KEY[f.slice(4)]) {
+    const key = LS_KEY[f.slice(4)];
+    if (v === "" && (key === "font" || key === "style" || key === "align")) return;   // "(mixed)": leave each as it is
+    for (const i of multi) {
+      const sl = doc.pages[cur].slots[i];
+      if (sl && sl.param && LS_WIDGETS.includes(sl.widget)) setNameStyle(sl, key, v === "__def" ? "" : v);
+    }
+    return;
+  }
+  if (v === "") return;   // "(mixed)": leave each as it is
+  const pg = doc.pages[cur];
+  for (const i of multi) {
+    const sl = pg.slots[i];
+    if (!sl || !sl.param) continue;
+    if (f === "m_widget") setWidget(sl, v);
+    else if (f === "m_element" && sl.widget === "knob") { if (v === "__kit") delete sl.element; else sl.element = v; }
+    else if (f === "m_showname" && sl.widget !== "slider") { if (v === "show") { if (sl.label === "") delete sl.label; } else sl.label = ""; }
+    else if (f === "m_overlay" && sl.widget !== "plotter") sl.overlay = v;
+    else if (f === "m_polarity" && (sl.widget === "knob" || sl.widget === "fader")) { if (v === "auto") delete sl.polarity; else sl.polarity = v; }
+  }
+}
 function renderInspector() {
   const box = $("inspector");
   if (grpSel >= 0) {
@@ -1447,15 +1995,11 @@ function renderInspector() {
       `<div class="row" style="margin-top:10px"><button data-f="gdel">Delete group</button></div>`;
     return;
   }
-  if (multi.size > 1) {
-    box.innerHTML = `<div class="note">${multi.size} controls selected. Shift-click adds, Ctrl-click removes, or drag a box around them.</div>` +
-      `<div class="row"><button class="primary" data-f="mkgrp">Group these</button><span class="note" style="margin:0">Ctrl+G</span></div>` +
-      `<div class="row" style="margin-top:10px"><button data-f="mdel">Clear them</button><button data-f="mclr" style="margin-left:auto">Deselect</button></div>`;
-    return;
-  }
+  if (multi.size > 1) { box.innerHTML = multiInspector(); return; }
   if (sel === null) { box.innerHTML = '<div class="note">Click a slot on the screen to edit it. Drag a parameter from the list onto a slot, or double-click it to use the first blank slot.</div>'; return; }
   const pg = doc.pages[cur], s = pg.slots[sel];
-  const head = `<div class="note">Slot ${sel + 1} · Q-Link ${qlink(sel)} · bank ${bankOf(sel)}</div>`;
+  const qs = qsFor(pg, sel), own = qs.length === 1 && qs[0] === qlink(sel);
+  const head = `<div class="note">Slot ${sel + 1} · ${!pg.slots[sel] || !pg.slots[sel].param || own ? `Q-Link ${qlink(sel)}` : qs.length ? `driven by Q-Link ${qs.join(", ")}` : "no Q-Link drives it"} · bank ${bankOf(sel)}</div>`;
   if (!s) { box.innerHTML = head + '<div class="note">This slot is blank.</div>'; return; }
   const p = byName[s.param];
   let h = head;
@@ -1471,6 +2015,7 @@ function renderInspector() {
       : `<div class="row"><input type="checkbox" data-f="showname" ${s.label === "" ? "" : "checked"} style="flex:none;width:auto"><span>Show name on the MPC</span></div>` +
         `<div class="row"><label>Label</label><input data-f="label" value="${esc(s.label || "")}" placeholder="${esc(s.param)}" maxlength="${MAX_LABEL}" ${s.label === "" ? "disabled" : ""} title="The name the MPC shows. Clear it to use the parameter's name."></div>`;
   }
+  if (s.param && LS_WIDGETS.includes(s.widget)) h += nameStyleRows(s.labelStyle || {}, "ls", false);
   if (s.widget === "text") h += `<div class="row"><label>Text</label><input data-f="text" value="${esc(s.text)}"></div>`;
   if (s.param && s.widget === "plotter") {
     h += `<div class="row"><label>Range min</label><input data-f="pmin" type="number" step="any" value="${s.min}"></div>`;
@@ -1478,7 +2023,8 @@ function renderInspector() {
     h += `<div class="note">The plotter shows the value's history as a scrolling trace. Use a display-only parameter that the plugin updates itself.</div>`;
   } else if (s.param) {
     h += `<div class="row"><label>Overlay</label><select data-f="overlay">${["knob", "menu"].map(o => `<option value="${o}" ${o === s.overlay ? "selected" : ""}>${o}</option>`).join("")}</select></div>`;
-    if (s.widget === "knob") h += elementField(s);
+    if (s.widget === "knob") h += elementField(s) +
+      `<div class="row"><button data-f="selKnobs" title="Select every knob on this page, then change them all at once">Select all knobs on this page</button></div>`;
     if (s.widget === "knob" || s.widget === "fader" || s.widget === "switch") {
       const pv = p ? previewOf(s, p) : 0;
       h += `<div class="row"><label>Preview</label><input data-f="preview" type="range" min="0" max="1" step="0.01" value="${pv}" title="Draws the control at this position. Not saved to ui.json."><span class="note">${Math.round(pv * 100)}%</span></div>`;
@@ -1694,6 +2240,14 @@ $("artList").addEventListener("focusin", e => { const i = +e.target.dataset.i; i
 
 // Typing a group's numbers moves its outline as you type.
 $("inspector").addEventListener("input", e => {
+  if (e.target.dataset.f === "m_preview") {   // several selected: they all re-draw as you drag
+    for (const i of multi) {
+      const sl = doc.pages[cur].slots[i];
+      if (sl && sl.param && (sl.widget === "knob" || sl.widget === "fader" || sl.widget === "switch")) sl.preview = Number(e.target.value);
+    }
+    renderStage();
+    return;
+  }
   if (e.target.dataset.f === "preview") {   // drag the Preview slider: the slot re-draws as you move it
     const s = sel !== null && doc.pages[cur].slots[sel];
     if (s) { s.preview = Number(e.target.value); renderStage(); }
@@ -1717,17 +2271,12 @@ $("inspector").addEventListener("change", e => {
     else setGroupBox(g, { gx: "x", gy: "y", gw: "w", gh: "h" }[f], Math.round(Number(v) || 0));
     renderAll(); return;
   }
+  if (f && f.startsWith("m_") && multi.size > 1) { applyMulti(f, e.target.value); renderAll(); return; }
   if (!f || sel === null) return;
   const s = doc.pages[cur].slots[sel]; if (!s) return;
   const v = e.target.value;
-  if (f === "widget") {
-    s.widget = v;
-    if (v === "plotter") { delete s.overlay; if (s.min === undefined) s.min = 0; if (s.max === undefined) s.max = 1; }
-    else { delete s.min; delete s.max; }
-    if (s.param && v !== "plotter") s.overlay = (v === "switch" || isDiscrete(byName[s.param])) ? "menu" : "knob";
-    else if (v === "text" && !s.text) s.text = "HEADING";
-    if (v !== "knob" && v !== "fader") delete s.polarity;
-  }
+  if (LS_KEY[f.slice(2)] && f.startsWith("ls")) { setNameStyle(s, LS_KEY[f.slice(2)], v === "__def" ? "" : v); renderAll(); return; }
+  if (f === "widget") setWidget(s, v);
   else if (f === "label") setSlotName(s, v);
   else if (f === "showname") { if (e.target.checked) { if (s.label === "") delete s.label; } else s.label = ""; }
   else if (f === "text") s.text = v;
@@ -1748,6 +2297,14 @@ $("inspector").addEventListener("click", e => {
   const f = e.target.dataset.f;
   if (f === "mkgrp") makeGroup();
   else if (f === "mclr") { sel = null; renderAll(); }
+  else if (f === "lsReset" && sel !== null) { const sl = doc.pages[cur].slots[sel]; if (sl) delete sl.labelStyle; renderAll(); }
+  else if (f === "m_lsReset") { for (const i of multi) { const sl = doc.pages[cur].slots[i]; if (sl) delete sl.labelStyle; } renderAll(); }
+  else if (f === "selKnobs") {
+    const ks = doc.pages[cur].slots.map((sl, i) => (sl && sl.widget === "knob") ? i : -1).filter(i => i >= 0);
+    if (ks.length) { multi = new Set(ks); sel = ks[ks.length - 1]; grpSel = -1; status(`Selected ${ks.length} knob(s) on this page.`); }
+    else status("There are no knobs on this page.", true);
+    renderAll();
+  }
   else if (f === "mdel") { for (const i of multi) doc.pages[cur].slots[i] = null; sel = null; renderAll(); }
   else if (f === "gdel" && grpSel >= 0) deleteGroup(grpSel);
 });
@@ -1870,6 +2427,8 @@ function loadDraft() {
     doc.pages.forEach(pg => {
       pg.background = pg.background || null; pg.art = Array.isArray(pg.art) ? pg.art : [];
       pg.groups = Array.isArray(pg.groups) ? pg.groups : [];
+      pg.qlinks = pg.qlinks && typeof pg.qlinks === "object" ? pg.qlinks : {};
+      pg.qlinkBanks = pg.qlinkBanks === "rows" ? "rows" : "columns";
       pg.bgTile = !!pg.bgTile; pg.bgScale = clampScale(pg.bgScale);
       pg.art.forEach(a => { a.tile = !!a.tile; a.scale = clampScale(a.scale); });
     });
@@ -1890,6 +2449,7 @@ function loadDraft() {
   await refreshReopen();
 })();
 startLibrary();
+startTemplates();
 </script>
 </body>
 </html>

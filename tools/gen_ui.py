@@ -26,7 +26,9 @@ Standard library only; Python 3.9+.
 
 import argparse
 import difflib
+import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -39,7 +41,10 @@ import sys
 SLOT_X = [23, 343, 663, 983]
 SLOT_Y = [45, 196, 346, 497]
 SLOT_W, SLOT_H = 278, 107
-QLINK_BOUNDS = ["38 0 248 624", "358 0 248 624", "678 0 248 624", "998 0 248 624"]
+QLINK_BOUNDS = ["38 0 248 624", "358 0 248 624", "678 0 248 624", "998 0 248 624"]   # column banks
+QLINK_ROW_BOUNDS = ["8 %d 1268 137" % (y - 15) for y in [45, 196, 346, 497]]            # row banks, top row first
+# How a model with 4 Q-Links (MPC One, Live) steps through a page's 16: a column at a time or a row at a time.
+QLINK_BANKS = {"columns": ("Column", QLINK_BOUNDS), "rows": ("RowTopDown", QLINK_ROW_BOUNDS)}
 MAX_CONTROLS_PER_PAGE = 16
 MAX_PAGES = 32
 FONT_NAME = "Titillium Web"
@@ -54,13 +59,19 @@ DEFAULT_STYLE = {
 WIDGETS = ("slider", "knob", "fader", "switch", "button", "empty", "text", "plotter")
 OVERLAYS = ("knob", "menu")
 POLARITIES = ("auto", "unipolar", "bipolar")
-CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity", "min", "max", "label", "element")
+CONTROL_KEYS = ("param", "widget", "visibleWhen", "text", "overlay", "polarity", "min", "max", "label", "element", "labelStyle")
+# The MPC's fonts (docs/ui-reference.md 1.5). There is no way to ship another font; an unknown name draws as Titillium Web.
+FONTS = ("Titillium Web", "Roboto", "Nexa")
+FONT_STYLES = ("Thin", "ThinItalic", "Light", "LightItalic", "Book", "BookItalic", "Regular", "Italic", "Medium",
+               "SemiBold", "SemiBoldItalic", "Bold", "BoldItalic", "Black")
+LABEL_STYLE_KEYS = ("font", "style", "size", "align", "dx", "dy")
+LABEL_STYLE_WIDGETS = ("knob", "fader", "switch", "button")   # the widgets whose name label the generator draws
 # Which library element type each widget may use (ui_library.TYPES); "text" uses a "label" element.
 ELEMENT_FOR_WIDGET = {"knob": "knob", "fader": "fader", "switch": "switch", "button": "button", "text": "label"}
 LABEL_JUSTIFY = {"left": "left", "right": "right", "centre": "horizontallyCentred verticallyCentred"}
 LABEL_MAX = 24   # longest on-screen label a control may have
 PLOTTER_HISTORY_SECONDS = 4.0
-PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups")
+PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups", "qlinks", "qlinkBanks")
 GROUP_KEYS = ("x", "y", "w", "h", "label")
 GROUP_LABEL_MAX = 40
 GROUP_RADIUS = 12   # corner radius of a group outline, in pixels
@@ -75,6 +86,19 @@ BIPOLAR_ZERO_RE = re.compile(r"^[+-]?0*(\.0+)?\s*[^0-9.]*$")
 
 # Segment buttons for choice switches: (asset width, x positions in the slot) per choice count.
 SEGMENTS = {2: (122, [15, 141]), 3: (80, [15, 99, 183]), 4: (58, [15, 77, 139, 201])}
+
+
+def parse_qlinks(spec, table, where):
+    """A page's Q-Link overrides: {"1": "Cutoff", "5": null, ...}. Keys are Q-Link numbers 1..16, values a parameter
+    name or null (the knob does nothing on this page). Q-Links not listed drive the control in their slot."""
+    if not isinstance(spec, dict):
+        fail(where, 'must be an object like {"1": "Cutoff", "5": null}: Q-Link number -> parameter name, or null for none')
+    out = {}
+    for k, v in spec.items():
+        if not (isinstance(k, str) and k.isdigit() and 1 <= int(k) <= 16):
+            fail(where, 'has the key %s; keys are Q-Link numbers "1" to "16"' % json.dumps(k))
+        out[int(k)] = None if v is None else table.lookup(v, '%s["%s"]' % (where, k))
+    return out
 
 
 def slot_qlink(row, col):
@@ -240,6 +264,7 @@ class Control:
         self.polarity = polarity  # auto | unipolar | bipolar (knob and fader only)
         self.plot_range = plot_range  # plotter only: (min, max) of the value it draws
         self.label = label        # on-screen name, or None to show the parameter's name
+        self.label_style = None   # {font, style, size, align, dx, dy} for the name label, or None for the default
         self.element = None       # name of a ui-library element, or None for the kit
         self.element_def = None   # its validated element.json (ui_library.load_element)
         self.element_assets = None  # its rendered assets: key -> (file, frames, (w, h))
@@ -276,13 +301,34 @@ class Control:
             key += "#" + self.element   # a library element draws its own pictures
         if self.label is not None and self.widget != "slider":
             key += "@" + self.label
+        if self.label_style:
+            # A styled name needs its own definition too; '~' and a short hash of the style mark it (see build_tui).
+            key += "~" + hashlib.sha1(json.dumps(self.label_style, sort_keys=True).encode("utf-8")).hexdigest()[:8]
         return key
+
+    @property
+    def tui_key(self):
+        """The definition's name as written to TUI.json (see tui_key)."""
+        return tui_key(self.definition_key)
+
+
+def tui_key(name):
+    """A definition name safe for the MPC: letters and digits only. definition_key marks an element, a label and
+    a label style with '#', '@' and '~' (build_tui reads them back); a skin whose definitions were named that way
+    showed a blank screen on an MPC One, so those names are written as the base name plus a short hash."""
+    if name.isalnum() and name.isascii():
+        return name
+    base = name.split("@")[0].split("~")[0].partition("#")[0]
+    return base + hashlib.sha1(name.encode("utf-8")).hexdigest()[:8]
 
 
 class Page:
-    def __init__(self, name, controls, background=None, art=None, background_tile=False, background_scale=100, groups=None):
+    def __init__(self, name, controls, background=None, art=None, background_tile=False, background_scale=100, groups=None,
+                 qlinks=None, qlink_banks="columns"):
         self.name = name
+        self.qlink_banks = qlink_banks  # "columns" (bank 1 = left column) or "rows" (bank 1 = top row)
         self.controls = controls  # list of Control, at most 16, in reading order
+        self.qlinks = qlinks or {}  # Q-Link number (1..16) -> Param, or None for no parameter; others follow the slots
         self.background_tile = background_tile   # True: repeat the background picture as tiles
         self.background_scale = background_scale  # tile size as a percentage of the picture's own size
         self.background = background  # file name of a full-tab image, or None
@@ -349,7 +395,87 @@ def parse_control(spec, table, where):
         if control.widget in ("empty", "text"):
             fail(where, '"label" does not apply to a "%s" control.' % control.widget)
         control.label = label.strip()   # the slider widget draws the parameter's own name, so it ignores this
+    if isinstance(spec, dict) and "labelStyle" in spec:
+        control.label_style = parse_label_style(spec["labelStyle"], control.widget, where)
     return control
+
+
+def parse_label_style(ls, widget, where):
+    """The name label's font, style, size (px), align and move (dx, dy in px), checked. None when it sets nothing."""
+    if widget not in LABEL_STYLE_WIDGETS:
+        fail(where, '"labelStyle" applies to knob, fader, switch and button controls (this one is "%s").' % widget,
+             "The slider bar draws the parameter's own name, and text controls take their style from a label element.")
+    if not isinstance(ls, dict):
+        fail(where, '"labelStyle" must be an object like {"font": "Roboto", "style": "Bold", "size": 24, "dy": 6}')
+    check_keys(where, ls, LABEL_STYLE_KEYS)
+    out = {}
+    if "font" in ls:
+        if ls["font"] not in FONTS:
+            fail(where, '"labelStyle".font must be one of %s, got %s.' % (", ".join('"%s"' % f for f in FONTS), json.dumps(ls["font"])),
+                 "The MPC has only these fonts; another name would silently draw as Titillium Web.")
+        out["font"] = ls["font"]
+    if "style" in ls:
+        if ls["style"] not in FONT_STYLES:
+            fail(where, '"labelStyle".style must be one of %s, got %s.' % (", ".join(FONT_STYLES), json.dumps(ls["style"])))
+        out["style"] = ls["style"]
+    if "size" in ls:
+        v = ls["size"]
+        if not isinstance(v, (int, float)) or isinstance(v, bool) or not 8 <= v <= 60:
+            fail(where, '"labelStyle".size must be a number of px from 8 to 60, got %s.' % json.dumps(v))
+        out["size"] = v
+    if "align" in ls:
+        if ls["align"] not in LABEL_JUSTIFY:
+            fail(where, '"labelStyle".align must be "left", "centre" or "right", got %s.' % json.dumps(ls["align"]))
+        out["align"] = ls["align"]
+    for k, lim in (("dx", SLOT_W), ("dy", SLOT_H)):
+        if k in ls:
+            v = ls[k]
+            if not isinstance(v, int) or isinstance(v, bool) or not -lim <= v <= lim:
+                fail(where, '"labelStyle".%s must be a whole number of px from %d to %d, got %s.' % (k, -lim, lim, json.dumps(v)))
+            if v:
+                out[k] = v
+    return out or None
+
+
+def _get(o, key):
+    return next(v for k, v in o if k == key)
+
+
+def _set(o, key, value):
+    for i, (k, _) in enumerate(o):
+        if k == key:
+            o[i] = (key, value)
+            return
+    o.append((key, value))
+
+
+def restyle_name(comp, ls):
+    """Applies a control's labelStyle to the name label inside its component definition: font, style, size and
+    alignment, and a move by (dx, dy) px. The label's box stays inside the slot, and grows to fit a larger font.
+    Returns False when the definition has no name label."""
+    for child in _get(comp, "componentsData"):
+        cd = _get(child, "componentData")
+        if _get(cd, "name") != "name":
+            continue
+        ts = _get(_get(cd, "data"), "textStyle")
+        font = _get(ts, "font")
+        if "font" in ls:
+            _set(font, "name", ls["font"])
+        if "style" in ls:
+            _set(font, "style", ls["style"])
+        if "size" in ls:
+            _set(font, "height", float(ls["size"]))
+        if "align" in ls:
+            _set(ts, "justification", LABEL_JUSTIFY[ls["align"]])
+        b = _get(child, "bounds")
+        x, y, w, h = (int(v) for v in _get(b, "bounds").split())
+        if "size" in ls:
+            h = min(SLOT_H, max(h, int(math.ceil(ls["size"] * 1.3))))
+        x = max(0, min(SLOT_W - w, x + ls.get("dx", 0)))
+        y = max(0, min(SLOT_H - h, y + ls.get("dy", 0)))
+        _set(b, "bounds", "%d %d %d %d" % (x, y, w, h))
+        return True
+    return False
 
 
 def parse_control_body(spec, table, where):
@@ -473,7 +599,12 @@ def load_ui(path, table):
         bg_scale = parse_scale(pspec.get("backgroundScale", 100), where + ' "backgroundScale"')
         art = [parse_art(a, where + ".art[%d]" % ai) for ai, a in enumerate(pspec.get("art", []))]
         groups = [parse_group(g, where + ".groups[%d]" % gi) for gi, g in enumerate(pspec.get("groups", []))]
-        pages.append(Page(name, controls, background, art, bg_tile, bg_scale, groups))
+        qlinks = parse_qlinks(pspec.get("qlinks", {}), table, where + ' "qlinks"')
+        qlink_banks = pspec.get("qlinkBanks", "columns")
+        if qlink_banks not in QLINK_BANKS:
+            fail(where, '"qlinkBanks" must be "columns" or "rows", got %s' % json.dumps(qlink_banks),
+                 'It says how a model with 4 Q-Links (MPC One, Live) steps through the page: "rows" makes bank 1 the top row.')
+        pages.append(Page(name, controls, background, art, bg_tile, bg_scale, groups, qlinks, qlink_banks))
 
     uses_kit = any(c.widget in KIT_WIDGETS for pg in pages for c in pg.controls)
     if kit is None and uses_kit:
@@ -734,24 +865,28 @@ def button_data(on_image, off_image, button_id, group_size):
                ("numButtonsInGroup", group_size), ("handleName", "Data"), ("gestureBehaviour", "Instant"))
 
 
-def label_data(label_type, colour, height=30.0, justification="left", text=None, handle=True):
-    """A text label. handle=True takes its text from the parameter ("Data" handle); a fixed text
-    (text given) is written without the handle so it stays as the user wrote it."""
+def label_data(label_type, colour, height=30.0, justification="left", text=None):
+    """A text label: "Name" or "Value" read the parameter, "Text" draws the fixed text. handleName is always
+    written (the MPC requires it, even for "Text"), and text only goes with type "Text" (docs/ui-reference.md)."""
+    if (text is not None) != (label_type == "Text"):
+        fail(None, "internal error: a %s label %s fixed text" % (label_type, "with" if text is not None else "without"))
     pairs = [("version", 1),
              ("textStyle", obj(("version", 1),
                                ("font", obj(("version", 1), ("name", FONT_NAME), ("style", "Regular"), ("height", float(height)))),
                                ("colour", colour), ("justification", justification), ("case", "Original"))),
-             ("type", label_type)]
-    if handle:
-        pairs.append(("handleName", "Data"))
+             ("type", label_type),
+             ("handleName", "Data")]
     if text is not None:
         pairs.append(("text", text))
     return Obj(pairs)
 
 
 def name_label(style, height, justification, name_text, colour_key="muted"):
-    """The parameter-name label of a control: the parameter's name, or the user's label when given."""
-    return label_data("Name", style[colour_key], height, justification, name_text, handle=name_text is None)
+    """The parameter-name label of a control: the parameter's name, or the user's label as fixed text. A label
+    of type "Name" with a text key and no handleName made the MPC One show a blank screen for the whole skin."""
+    if name_text is None:
+        return label_data("Name", style[colour_key], height, justification)
+    return label_data("Text", style[colour_key], height, justification, name_text)
 
 
 def focus_data(accent):
@@ -807,8 +942,11 @@ def knob_stacked(style, knob, size, name_text=None, show_value=True, value_size=
              entry("name", "Label", name_label(style, float(name_font), "horizontallyCentred verticallyCentred", name_text),
                    "0 0 %d %d" % (SLOT_W, band), "No", "Show", "Always")]
     if show_value:
+        # The value's box is centred on the knob: 32 px tall, taller for a large valueSize so it is not cut off
+        # (the editors use the same box, ui_elements.js valueBoxH).
+        vh = max(32, int(math.ceil(value_size * 1.2)))
         parts.append(entry("value", "Label", label_data("Value", value_colour or style["text"], value_size, "horizontallyCentred verticallyCentred"),
-                           "%d %d %d 32" % (x, band + size // 2 - 16, size), "No", "Show", "Always"))
+                           "%d %d %d %d" % (x, band + size // 2 - vh // 2, size, vh), "No", "Show", "Always"))
     return parts
 
 
@@ -955,7 +1093,7 @@ def tab_component(page, style):
                                   "%d %d %d 24" % (SLOT_X[col], SLOT_Y[row] + PLOTTER_H + 4, SLOT_W),
                                   "No", "Hide", "Always", invalidating=invalidating))
             continue
-        children.append(entry(ctl.param.name, ctl.definition_key, obj(("version", 1), ("handleName", "Data")), bounds,
+        children.append(entry(ctl.param.name, ctl.tui_key, obj(("version", 1), ("handleName", "Data")), bounds,
                               "Yes", "Hide", "Always", remap=[("Data", ctl.param.handle)], invalidating=invalidating))
         if ctl.definition.startswith("radio"):
             # Segment captions live in the tab (the definition is shared by every n-way switch).
@@ -972,6 +1110,7 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
     """kit_assets: dict asset name -> (file, frames, (w, h)) for the kit files available, or {} without a kit."""
     used = []
     label_of = {}   # definition key -> the custom label it draws (only for keys with one)
+    style_of = {}   # definition key -> the labelStyle its name label takes (only for keys with one)
     element_of = {}  # definition key -> the library element whose pictures it draws
     for page in pages:
         for ctl in page.controls:
@@ -984,6 +1123,8 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
                     label_of[key] = ctl.label
                 if ctl.element:
                     element_of[key] = ctl
+                if ctl.label_style:
+                    style_of[key] = ctl.label_style
     if "sliderWithFocus" not in used:
         used.insert(0, "sliderWithFocus")  # always present, so hand edits have a template to copy
 
@@ -1001,8 +1142,9 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
 
     defs = []
     for name in used:
-        # "base#element@label": the base definition, the library element (optional) and the custom name (optional).
-        head = name.split("@")[0]
+        # "base#element@label~style": the base definition, the library element, the custom name and the name's
+        # style (each optional).
+        head = name.split("@")[0].split("~")[0]
         full, _, _ = head.partition("#")
         elem = element_of.get(name)
         get = source(elem)
@@ -1043,7 +1185,11 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
             comp = radio_component(style, overlay, n, name_text=text, files=(on[0], off[0]))
         else:
             fail(None, "internal error: no builder for component %s" % name)
-        defs.append((name, comp))
+        if style_of.get(name) and not restyle_name(comp, style_of[name]):
+            fail(None, "internal error: component %s has no name label to style" % name)
+        defs.append((tui_key(name), comp))
+    if len({k for k, _ in defs}) != len(defs):
+        fail(None, "internal error: two component definitions got the same TUI name")
     defs.append(("knob overlay", overlay_component("KnobOverlay", knob_overlay_data(False), style["background"])))
     defs.append(("knob overlay bipolar", overlay_component("KnobOverlay", knob_overlay_data(True), style["background"])))
     defs.append(("menu overlay", overlay_component("MenuOverlay", menu_overlay_data(), style["background"])))
@@ -1063,7 +1209,7 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
     for ti, page in enumerate(pages):
         tabs.append(obj(("version", 1), ("tabName", page.name), ("fnKeyIndex", ti), ("fnKeySubIndex", 0),
                         ("componentDefinition", tab_component(page, style)),
-                        ("qlinkBoundsData", list(QLINK_BOUNDS))))
+                        ("qlinkBoundsData", list(QLINK_BANKS[page.qlink_banks][1]))))
 
     page_data = obj(
         ("version", 1),
@@ -1083,8 +1229,10 @@ def build_qlinks(pages, params):
             if ctl.param is not None and ctl.widget != "plotter":   # display-only: no hardware knob
                 row, col = divmod(i, 4)
                 assigned[slot_qlink(row, col)] = ctl.param.index
+        for q, p in page.qlinks.items():   # the page's own choices win over the slot order
+            assigned[q] = -1 if p is None else p.index
         qmap = Obj(("Q-Link %d" % q, assigned.get(q, -1)) for q in range(1, 17))
-        entries.append(obj(("Tab", ti + 1), ("SubTab", 1), ("Bank Direction", "Column"), ("Q-Links", qmap)))
+        entries.append(obj(("Tab", ti + 1), ("SubTab", 1), ("Bank Direction", QLINK_BANKS[page.qlink_banks][0]), ("Q-Links", qmap)))
     by_index = {p.index: p for p in params}
     first16 = sorted(by_index)[:16]
     program = Obj(("Q-Link %d" % (q + 1), first16[q] if q < len(first16) else -1) for q in range(16))

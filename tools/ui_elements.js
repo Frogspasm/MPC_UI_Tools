@@ -5,6 +5,10 @@
 const UIEL = (() => {
   // ---------- theme defaults (copied from THEMES in tools/make_ui_kit.py) ----------
   const THEME_ACCENT = { "mpc-red": "ffd31145", "amber": "ffffa21a", "cyan": "ff19c6e0", "lime": "ff8fd21f", "violet": "ff9b63ff", "mono": "ffe4e4e6", "acidbox": "ffd93a25", "acidbox-midnight": "ffff5b40" };
+  const VALUE_FONT_EM = 1.521;   // Titillium Web: ascent + descent per em (as FONT_EM in the layout editor)
+  // The box the knob's value sits in, centred on the knob, as tools/gen_ui.py knob_stacked writes it: 32 px tall,
+  // taller for a large value so the MPC does not cut it off.
+  const valueBoxH = size => Math.max(32, Math.ceil(size * 1.2));
   const GREY = { body: "ff2a2a2d", track: "ff434347", pointer: "fff2f2f2", thumb: "ffb9b9bd", outline: "ff0e0e0f" };
 
   // ---------- colours: ARGB strings <-> arrays and CSS ----------
@@ -163,7 +167,9 @@ const UIEL = (() => {
   // The parameter's value, centred on the knob (a preview of the number the MPC shows there).
   function drawValueText(ctx, S, st) {
     const c = S / 2;
-    ctx.font = `${st.valueSize ?? 22}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = st.valueColour ? css(st.valueColour) : "#ffffff";
+    // The MPC's font height is the line height (ascent + descent), 1.521 em for Titillium Web, so the CSS size is
+    // smaller than valueSize; the layout editor and tools/gen_ui.py use the same rule.
+    ctx.font = `${(st.valueSize ?? 22) / VALUE_FONT_EM}px "Titillium Web", system-ui, sans-serif`; ctx.fillStyle = st.valueColour ? css(st.valueColour) : "#ffffff";
     ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(st.valueText, c, c);
   }
 
@@ -302,5 +308,5 @@ const UIEL = (() => {
 
   return { THEME_ACCENT, GREY, argb, cssA, css, mixA, hexOf, WHITE, BLACK, SWEEP, canvasAng, drawArc, roundRect, strokeRoundRect,
            curveAt, SEG16, SEG_ORDER, CHAR16, drawGlyph, drawKnob, drawValueText, drawFader, drawSwitch, drawButton, drawTicks,
-           theme, parts, style, knobPicture };
+           theme, parts, style, knobPicture, VALUE_FONT_EM, valueBoxH };
 })();

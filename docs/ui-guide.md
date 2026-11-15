@@ -66,6 +66,7 @@ For full control over the look (images, custom widgets, envelopes), read `ui-ref
 | `polarity` | For `knob` and `fader`: `"auto"` (default), `"unipolar"` or `"bipolar"`. Bipolar strips fill from the centre. Auto picks bipolar when the parameter's default is the centre of its range and its value text reads as zero. |
 | `label` | The name shown on the MPC for a `knob`, `fader`, `switch` or `plotter` (up to 24 characters). Defaults to the parameter's name. `""` hides the name on the MPC, leaving only the value. Not used by `"slider"`, whose bar draws the parameter's own name. |
 | `element` | The name of a picture-and-style element in `ui-library/` (see the element library section below). It replaces the kit's pictures for that control: `knob`, `fader`, `switch`, `button`, or `text` (a label style). |
+| `labelStyle` | The look and place of the control's name (knob, fader, switch and button): `{"font": "Roboto", "style": "Bold", "size": 24, "align": "left", "dx": 0, "dy": 30}`, every key optional. `font` is one of the MPC's three fonts, `Titillium Web` (its own), `Roboto` or `Nexa`; `style` is one of `Thin`, `Light`, `Book`, `Regular`, `Medium`, `SemiBold`, `Bold`, `Black` and their `…Italic` forms; `size` is the text height in px (8 to 60); `align` is `left`, `centre` or `right`; `dx`/`dy` move the name in px within its slot (it stays inside the slot, and its box grows to fit a larger size). A knob's name spans the slot's width, so it moves sideways with `align`. In the layout editor: select the control and drag its name, or use **Name style** in the Inspector (also for several selected controls at once). |
 | `overlay` | What double-tap / Enter opens: `"knob"` (big knob editor, default) or `"menu"` (a list; the default for `switch`, and the right choice for any long choice list). |
 | `visibleWhen` | Show this control only while another parameter has a given value: `{"param": "Wave", "choice": "Square"}` or `{"param": "Sync", "index": 1}`. Works with choice and bool parameters. |
 | `kit` | The film-strip theme for `knob` / `fader` / `switch`: `"mpc-red"` (assumed when absent), `"amber"`, `"cyan"`, `"lime"`, `"violet"`, `"mono"`, or `{ "theme": "...", "accent": "AARRGGBB" }`. See `ui-kit/README.md` and `ui-kit/preview.png`. |
@@ -119,6 +120,14 @@ Rules of thumb:
 { "name": "BASS", "background": "grain.png", "backgroundTile": true, "backgroundScale": 25, "controls": [ ... ] }
 ```
 
+## Opening the UI tools
+
+Start them with **`Open UI tools.bat`** in the repo folder (double-click; on macOS `Open UI tools.command`), or `python tools/ui_server.py`. It starts a small server for this repo on your computer and opens the layout editor and the element designer in the browser (http://127.0.0.1:8770/; the next free port if that one is busy). Leave its window open while you work; closing it stops the server.
+
+Opened this way, both tools read and save `ui-library/` and `ui-pages/` in the repo through the server: there is no folder to choose and nothing to reconnect after a reload, and a save in the designer shows in the layout editor at once. The server only listens on your own computer and only writes `.json` files inside those two folders. Opening the HTML files directly still works, but then the browser asks for the folders again on every visit.
+
+Drafts are kept per address: a layout you had open as a file does not carry over to the server address. Save or export it to the plugin's `ui.json` first, then open it in the served editor.
+
 ## Element library
 
 Build knobs, faders, switches, buttons and label styles once, and reuse them across plugins. Each element is a folder in `ui-library/` with an `element.json`. Design one in the browser with `tools/ui_designer.html` (choose the library folder, edit, save) or write it by hand, and check it with `python tools/ui_library.py check <name>`.
@@ -131,7 +140,9 @@ Name an element in `ui.json` with `"element"`. A build draws the element's pictu
 { "widget": "text", "text": "Filter", "element": "example-label" }
 ```
 
-**Putting a knob element on a layout in the editor.** Save the element from `tools/ui_designer.html`, then in `tools/ui_editor.html` select a knob slot and pick the element from **Element** in the Inspector. The editor draws it straight from its `element.json` (no render step), at the value set by **Preview**. If the list isn't there yet, press **Choose ui-library folder…** beside Element once and pick the repo's `ui-library` folder; the editor remembers it (after a reload it may ask with one click, **Reconnect**). Served from the repo, the editor finds `ui-library/` by itself. After saving a new element in the designer, press **↻** beside Element.
+**Putting a knob element on a layout in the editor.** Save the element from `tools/ui_designer.html`, then in `tools/ui_editor.html` select a knob slot and pick the element from **Element** in the Inspector. The editor draws it straight from its `element.json` (no render step), at the value set by **Preview**. If the list isn't there yet, press **Choose ui-library folder…** beside Element once and pick the repo's `ui-library` folder; the editor remembers it (after a reload it may ask with one click, **Reconnect**). Opened with `Open UI tools.bat` (see above), both tools find `ui-library/` by themselves and none of the folder steps here apply. The designer's **Library** panel (left column) shows which folder it saves to, a **Save to library** button (marked • while there are unsaved changes) and the saved elements listed by type (knobs, faders, switches, buttons, labels); click one to open it. After a reload the browser asks once before the designer can write to the folder again: press **Reconnect**. Saving under the same name updates the element. An open layout editor in the same browser draws the element as you edit it in the designer, before you save, and its Kit panel says "showing my-knob as edited in the designer (not saved yet)" until the library matches; a build only uses what is saved. The layout editor also reads the library again every few seconds and when you switch back to it (**↻** does it by hand).
+
+To change many controls at once, select them (Shift-click, Ctrl-click, drag a box, or **Select all knobs on this page** in a knob's Inspector). The Inspector then shows the settings they share (Widget, Element, Name, Overlay, Polarity, Preview); a choice applies to every selected control it fits, an element only to the knobs. A field reads "(mixed)" while the selection differs. Undo reverts the whole change in one step.
 
 `button` is a push button for a bool parameter (its own widget, drawn with the LED style). A button element sets its roundness (`corner`), the width of its highlight and the width of its drop shadow.
 
@@ -158,6 +169,23 @@ A knob can also set:
 ```
 
 The generator writes each outline as `group-<page>-<n>.png` into Plugin Skins/. The outline does not move with the controls. Leave 14 px on the sides and below the controls and about 36 px above them, so the label has room.
+
+**Q-Links.** By default each hardware Q-Link drives the control in its slot of the 4 x 4 grid (Q13 top-left, Q1 bottom-left; a 4-knob MPC steps through the columns as banks). A page's `qlinks` overrides single knobs: a Q-Link number (`"1"` to `"16"`) and a parameter name, or `null` to leave that knob unused on the page. Q-Links not listed keep following their slots. Any parameter works, even one not shown on the page:
+
+```json
+{ "name": "BASS", "controls": [ ... ], "qlinks": { "13": "Cutoff", "14": "Resonance", "1": null } }
+```
+
+In the layout editor, the **Q-Links on this page** panel under the screen sets these with one menu per knob. **Pin current mapping** writes down what every knob drives now, so moving controls afterwards leaves the hardware mapping alone; **Reset to automatic** removes the page's overrides. A slot's Q badge (plain view) and the Inspector show which Q-Links really drive it; "no Q" means none.
+
+**Banks on a 4-knob MPC (One, Live).** These models step through a page's 16 Q-Links four at a time. By default a bank is a column (bank 1 = the left column, Q13 Q9 Q5 Q1). Set `"qlinkBanks": "rows"` on a page to bank by rows instead: bank 1 is the top row (Q13 Q14 Q15 Q16), bank 2 the next row, and the MPC's highlight frame goes round a row. Lay a rows page out with one related set of four controls per row. In the layout editor this is the **Banks for 4 Q-Links: Columns / Rows** switch in the Q-Links panel; the dashed bank frames on the screen follow it. Models with 16 Q-Links are not affected.
+
+**Templates.** The layout editor's **Templates** panel (left column) saves into the repo's `ui-pages/` folder (opened with `Open UI tools.bat` it is already connected; otherwise the first save asks for the folder). It lists the saved ones in two groups:
+
+- **Pages.** **Save this page…** saves the page on the screen. **Add as new page** puts a copy after the current page; **Replace this page** swaps the current page for it.
+- **Layouts.** **Save whole layout…** saves every page together with the kit, style and other layout settings: the whole `ui.json`. **Use this layout** replaces the layout you are editing with it; **Add its pages** inserts its pages after the current page and keeps your own kit and style.
+
+Undo brings back whatever a template replaced. Templates keep controls, names and name styles, elements, groups, Q-Links (and bank direction) and artwork names. Parameter names stay as saved: the list shows how many a plugin lacks, and Checks names those slots so you can point them at the plugin's own parameters. Artwork files are not in the template: copy the pictures into the plugin's `assets/` folder.
 
 **Plotter.** A scrolling trace of one value the plugin writes for the screen. It needs a parameter that is not automatable (`automatable = false` in `addParam`), so the host does not treat it as a control:
 
