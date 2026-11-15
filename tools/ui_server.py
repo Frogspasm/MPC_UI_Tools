@@ -14,7 +14,8 @@ Stop it with Ctrl+C or by closing its window.
 
 Safety: it listens on 127.0.0.1 only (not reachable from other machines), answers only requests addressed to
 127.0.0.1/localhost (so other web sites cannot reach it through DNS tricks), sends no CORS headers (so other web
-pages cannot call it), and writes only .json files inside ui-library/ and ui-pages/. Everything else is read only.
+pages cannot call it), and writes only .json files inside ui-library/ and ui-pages/, and plugins/<Name>/ui.json. Everything else is read
+only.
 """
 import argparse
 import http.server
@@ -29,7 +30,9 @@ import webbrowser
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SERVER_ID = "mpc-ui-tools"
-WRITABLE = ("ui-library", "ui-pages")     # the only folders the tools may write in
+WRITABLE = ("ui-library", "ui-pages")     # the folders the tools may write .json files in
+# Besides those, the layout editor may list plugins/ and write plugins/<Name>/ui.json (nothing else there).
+READABLE = WRITABLE + ("plugins",)
 MAX_BODY = 4 * 1024 * 1024                # an element or a page template is a few kB
 PART_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 _.-]{0,63}$")
 DEFAULT_PORT = 8770
@@ -51,9 +54,10 @@ def safe_rel(path, for_write):
     parts = [p for p in path.replace("\\", "/").split("/") if p]
     if not parts or any(not PART_RE.match(p) or p in (".", "..") for p in parts):
         return None
-    if for_write and (parts[0] not in WRITABLE or len(parts) < 2 or not parts[-1].lower().endswith(".json")):
+    plugin_ui = len(parts) == 3 and parts[0] == "plugins" and parts[2] == "ui.json"
+    if for_write and not plugin_ui and (parts[0] not in WRITABLE or len(parts) < 2 or not parts[-1].lower().endswith(".json")):
         return None
-    if not for_write and parts[0] not in WRITABLE:
+    if not for_write and parts[0] not in READABLE:
         return None
     full = os.path.realpath(os.path.join(ROOT, *parts))
     base = os.path.realpath(os.path.join(ROOT, parts[0]))
@@ -136,7 +140,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self.reply(415, {"error": "send application/json"})
         full = safe_rel((urllib.parse.parse_qs(url.query).get("path") or [""])[0], for_write=True)
         if not full:
-            return self.reply(400, {"error": "only .json files inside %s can be written" % " or ".join(WRITABLE)})
+            return self.reply(400, {"error": "only .json files inside %s, and plugins/<Name>/ui.json, can be written" % " or ".join(WRITABLE)})
         try:
             n = int(self.headers.get("Content-Length") or "0")
         except ValueError:

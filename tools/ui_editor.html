@@ -118,6 +118,7 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
 <body>
 <header>
   <h1>MPC UI Layout Editor</h1>
+  <select id="plugSel" hidden title="Opened from the UI tools server: load a plugin's params.json and ui.json from the repo, and save ui.json back to it"></select>
   <button id="bParams">Load params.json</button>
   <button id="bLoad">Open ui.json</button>
   <button id="bSave" class="primary">Save ui.json</button>
@@ -329,6 +330,7 @@ async function openKind(kind) {
       const [h] = await showOpenFilePicker({ types: PICK_TYPES, startIn: await lastLocation(key) });
       await rememberLocation(key, h);
       await idbPut(kind, h);
+      if (kind === "ui" && servedPlugin) { servedPlugin = ""; renderPlugSel(); }   // Save then asks where, not the menu's plugin
       await ingest(kind, await (await h.getFile()).text(), h.name);
       await refreshReopen();
     } catch (e) { if (e.name !== "AbortError") status(e.message, true); }
@@ -536,6 +538,16 @@ async function saveUi() {
   const errs = allProblems().filter(p => p.err).length;
   if (errs && !confirm(`There are ${errs} problem(s) that the generator will reject. Save anyway?`)) return;
   const text = JSON.stringify(exportUi(), null, 2) + "\n";
+  if (servedPlugin) {
+    try {
+      const r = await fetch("/api/file?path=" + encodeURIComponent(`plugins/${servedPlugin}/ui.json`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: text });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
+      fileNames.ui = `plugins/${servedPlugin}/ui.json`;
+      status(`Saved plugins/${servedPlugin}/ui.json. Build the plugin to put it on the MPC.`);
+      renderAll();
+    } catch (e) { status("Save failed: " + e.message, true); }
+    return;
+  }
   let remembered = null;
   if (window.showOpenFilePicker) { try { remembered = await idbGet("ui"); } catch (e) { remembered = null; } }
   if (remembered) {
@@ -1270,12 +1282,31 @@ let tplPending = null;    // a folder remembered from last time that needs one c
 let tplServed = false;    // listed from the repo's ui-pages/ over HTTP (read only)
 let templates = [];       // [{name, file, page, note}]
 const TPL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.-]{0,47}$/;
+// The value every control on a page is drawn at (its Preview, else the parameter's default), 0..1, by slot
+// number: {"0": 0.42, "5": 1}. Templates keep them beside the page; ui.json does not (the MPC shows the
+// plugin's own values).
+function pageValues(pg) {
+  const out = {};
+  pg.slots.forEach((s, i) => {
+    if (!s || !s.param || s.widget === "text" || s.widget === "empty") return;
+    const v = typeof s.preview === "number" ? s.preview : byName[s.param] ? Number(byName[s.param].default) : NaN;
+    if (Number.isFinite(v)) out[i] = Math.round(Math.min(1, Math.max(0, v)) * 10000) / 10000;
+  });
+  return out;
+}
+function applyValues(pg, vals) {
+  if (!vals || typeof vals !== "object") return;
+  Object.entries(vals).forEach(([k, v]) => {
+    const s = pg.slots[Number(k)];
+    if (s && s.param && typeof v === "number" && Number.isFinite(v)) s.preview = Math.min(1, Math.max(0, v));
+  });
+}
 // A template file: {"page": one page} or {"layout": a whole ui.json (pages, kit, style ...)}.
 function tplOf(j, file) {
   if (!j || typeof j !== "object") return null;
   const name = String(j.name || file.replace(/\.json$/i, ""));
-  if (j.layout && Array.isArray(j.layout.pages) && j.layout.pages.length) return { name, file, layout: j.layout };
-  if (j.page && typeof j.page === "object") return { name, file, page: j.page };
+  if (j.layout && Array.isArray(j.layout.pages) && j.layout.pages.length) return { name, file, layout: j.layout, values: Array.isArray(j.values) ? j.values : [] };
+  if (j.page && typeof j.page === "object") return { name, file, page: j.page, values: j.values && typeof j.values === "object" ? j.values : {} };
   return null;
 }
 const ctlCount = pg => Array.isArray(pg && pg.controls) ? pg.controls.filter(c => c && (typeof c === "string" || (c.widget !== "empty" && (c.param || c.widget === "text")))).length : 0;
@@ -1373,7 +1404,8 @@ async function saveTemplate(whole) {
   try {
     const h = await tplDir.getFileHandle(file, { create: true });
     const w = await h.createWritable();
-    const body = whole ? { format: 1, name, layout: exportUi() } : { format: 1, name, page: pageToJson(pg) };
+    const body = whole ? { format: 1, name, layout: exportUi(), values: doc.pages.map(pageValues) }
+      : { format: 1, name, page: pageToJson(pg), values: pageValues(pg) };
     await w.write(JSON.stringify(body, null, 2) + "\n"); await w.close();
     status(whole ? `Saved the whole layout (${doc.pages.length} pages) as template ${name}.` : `Saved page "${pg.name}" as template ${name}.`);
     await loadTemplates();
@@ -1384,6 +1416,7 @@ function useTemplate(i, how) {
   if (t.layout) return useLayoutTemplate(t, how);
   loadNotes = [];
   const page = pageFromJson(t.page, cur);
+  applyValues(page, t.values);
   const missing = tplMissing(t);
   if (how === "add") {
     if (doc.pages.length >= MAX_PAGES) { status(`A layout has at most ${MAX_PAGES} pages.`, true); return; }
@@ -1405,10 +1438,12 @@ function useLayoutTemplate(t, how) {
   if (how === "layout") {
     const used = doc.pages.some(pg => pg.slots.some(Boolean));
     if (used && !confirm(`Replace the whole layout (${doc.pages.length} page${doc.pages.length === 1 ? "" : "s"}) with template ${t.name}? (Undo brings it back.)`)) return;
+    d.pages.forEach((pg, k) => applyValues(pg, t.values[k]));
     doc = d; cur = 0;
   } else {
     const room = MAX_PAGES - doc.pages.length;
     if (room <= 0) { status(`A layout has at most ${MAX_PAGES} pages.`, true); return; }
+    d.pages.forEach((pg, k) => applyValues(pg, t.values[k]));
     const add = d.pages.slice(0, room);
     doc.pages.splice(cur + 1, 0, ...add); cur = cur + 1;
     if (add.length < d.pages.length) loadNotes.push(`Only ${add.length} of the template's ${d.pages.length} pages fit (at most ${MAX_PAGES}).`);
@@ -2439,6 +2474,57 @@ function loadDraft() {
   } catch (e) { return false; }
 }
 
+// ---------- plugins from the repo (opened from tools/ui_server.py) ----------
+// The Plugin menu loads plugins/<Name>/build/params.json and plugins/<Name>/ui.json over the server, and Save ui.json
+// writes plugins/<Name>/ui.json back. The choice is remembered, and params.json is read again on every start, so a
+// rebuilt plugin's parameters are always current.
+let servedPlugin = "";
+const PLUGIN_KEY = "mpc-ui-editor-plugin";
+async function listPlugins() {
+  const r = await fetch("/api/list?dir=plugins", { cache: "no-store" });
+  if (!r.ok) return [];
+  return (await r.json()).entries.filter(e => e.kind === "directory").map(e => e.name);
+}
+async function openPlugin(name, withUi) {
+  const get = async path => { const r = await fetch("/" + path.split("/").map(encodeURIComponent).join("/"), { cache: "no-store" }); return r.ok ? r.text() : null; };
+  const pj = await get(`plugins/${name}/build/params.json`);
+  if (pj === null) { status(`plugins/${name}/build/params.json is not there yet: build the plugin once (python tools/build.py plugins/${name}).`, true); return false; }
+  if (!(await ingest("params", pj, `plugins/${name}/build/params.json`))) return false;
+  servedPlugin = name;
+  try { localStorage.setItem(PLUGIN_KEY, name); } catch (e) { /* not remembered */ }
+  if (withUi) {
+    const uj = await get(`plugins/${name}/ui.json`);
+    if (uj !== null) await ingest("ui", uj, `plugins/${name}/ui.json`);
+    else { doc = { pages: [newPage("1")], kit: null, extra: {} }; cur = 0; sel = null; fileNames.ui = ""; status(`Loaded ${params.length} parameters from ${name}. It has no ui.json yet: Save ui.json creates it.`); renderAll(); }
+  }
+  renderPlugSel();
+  return true;
+}
+let pluginNames = [];
+function renderPlugSel() {
+  const s = $("plugSel");
+  s.innerHTML = `<option value="">Plugin…</option>` + pluginNames.map(n => `<option value="${esc(n)}" ${n === servedPlugin ? "selected" : ""}>${esc(n)}</option>`).join("");
+}
+$("plugSel").addEventListener("change", async e => {
+  const name = e.target.value; if (!name) return;
+  const hasWork = doc.pages.some(pg => pg.slots.some(Boolean));
+  if (hasWork && name !== servedPlugin && !confirm(`Open ${name}? The layout on the screen is replaced (Undo brings it back).`)) { renderPlugSel(); return; }
+  await openPlugin(name, true);
+});
+async function startPlugins() {
+  if (!(await UISERVER.available())) return;
+  pluginNames = await listPlugins();
+  $("plugSel").hidden = false;
+  let last = ""; try { last = localStorage.getItem(PLUGIN_KEY) || ""; } catch (e) { /* none */ }
+  if (last && pluginNames.includes(last)) {
+    // A draft of this plugin's layout is kept as it is; only the parameters are read again.
+    const drafted = (fileNames.ui || "").startsWith(`plugins/${last}/`) && doc.pages.some(pg => pg.slots.some(Boolean));
+    await openPlugin(last, !drafted);
+    if (drafted) status(`${last}: parameters re-read from the repo; your layout is as you left it (Save ui.json writes plugins/${last}/ui.json).`);
+  } else if (pluginNames.length === 1 && !params.length) await openPlugin(pluginNames[0], true);
+  else { renderPlugSel(); if (!params.length) status("Choose your plugin from the Plugin menu to begin."); }
+}
+
 // ---------- start ----------
 (async () => {
   if (loadDraft()) status("Restored your last session from this browser. Reopen from disk to re-read the files.");
@@ -2447,6 +2533,7 @@ function loadDraft() {
   await restoreAssetsFolder();
   renderAll();
   await refreshReopen();
+  await startPlugins();
 })();
 startLibrary();
 startTemplates();

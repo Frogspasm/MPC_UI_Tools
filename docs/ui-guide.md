@@ -124,7 +124,9 @@ Rules of thumb:
 
 Start them with **`Open UI tools.bat`** in the repo folder (double-click; on macOS `Open UI tools.command`), or `python tools/ui_server.py`. It starts a small server for this repo on your computer and opens the layout editor and the element designer in the browser (http://127.0.0.1:8770/; the next free port if that one is busy). Leave its window open while you work; closing it stops the server.
 
-Opened this way, both tools read and save `ui-library/` and `ui-pages/` in the repo through the server: there is no folder to choose and nothing to reconnect after a reload, and a save in the designer shows in the layout editor at once. The server only listens on your own computer and only writes `.json` files inside those two folders. Opening the HTML files directly still works, but then the browser asks for the folders again on every visit.
+The layout editor then has a **Plugin** menu in its top bar: pick a plugin from `plugins/` and it loads that plugin's `build/params.json` and `ui.json`, and **Save ui.json** writes `plugins/<Name>/ui.json` straight back. It remembers the plugin and reads `params.json` again every time it starts, so a rebuilt plugin's parameters are always current; a layout you have not saved yet stays as you left it. With only one plugin in the repo it is opened by itself. (Build a plugin once before its parameters can load.)
+
+Opened this way, both tools read and save `ui-library/` and `ui-pages/` in the repo through the server: there is no folder to choose and nothing to reconnect after a reload, and a save in the designer shows in the layout editor at once. The server only listens on your own computer and only writes `.json` files inside those two folders, plus `plugins/<Name>/ui.json`. Opening the HTML files directly still works, but then the browser asks for the folders again on every visit.
 
 Drafts are kept per address: a layout you had open as a file does not carry over to the server address. Save or export it to the plugin's `ui.json` first, then open it in the served editor.
 
@@ -185,7 +187,7 @@ In the layout editor, the **Q-Links on this page** panel under the screen sets t
 - **Pages.** **Save this page…** saves the page on the screen. **Add as new page** puts a copy after the current page; **Replace this page** swaps the current page for it.
 - **Layouts.** **Save whole layout…** saves every page together with the kit, style and other layout settings: the whole `ui.json`. **Use this layout** replaces the layout you are editing with it; **Add its pages** inserts its pages after the current page and keeps your own kit and style.
 
-Undo brings back whatever a template replaced. Templates keep controls, names and name styles, elements, groups, Q-Links (and bank direction) and artwork names. Parameter names stay as saved: the list shows how many a plugin lacks, and Checks names those slots so you can point them at the plugin's own parameters. Artwork files are not in the template: copy the pictures into the plugin's `assets/` folder.
+Undo brings back whatever a template replaced. Templates also keep the value every control is shown at in the editor (its **Preview** position, else the parameter's default), and set those again when used. These are only for the editor's picture: `ui.json` does not hold them, and on the MPC the controls show the plugin's own values. Templates keep controls, names and name styles, elements, groups, Q-Links (and bank direction) and artwork names. Parameter names stay as saved: the list shows how many a plugin lacks, and Checks names those slots so you can point them at the plugin's own parameters. Artwork files are not in the template: copy the pictures into the plugin's `assets/` folder.
 
 **Plotter.** A scrolling trace of one value the plugin writes for the screen. It needs a parameter that is not automatable (`automatable = false` in `addParam`), so the host does not treat it as a control:
 
