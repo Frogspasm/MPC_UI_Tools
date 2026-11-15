@@ -1,0 +1,122 @@
+{
+  "format": 1,
+  "name": "AcidBox_002",
+  "page": {
+    "name": "FX",
+    "controls": [
+      {
+        "param": "Space",
+        "widget": "switch",
+        "overlay": "menu"
+      },
+      {
+        "param": "Echo",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Reverb",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Room Size",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Dist Type",
+        "widget": "slider",
+        "overlay": "menu"
+      },
+      {
+        "param": "Dist Amount",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Dist Tone",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Dist Mix",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Ring Mode",
+        "widget": "slider",
+        "overlay": "menu"
+      },
+      {
+        "param": "Ring Amount",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Ring Pitch",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "widget": "empty"
+      },
+      {
+        "param": "Filter",
+        "widget": "switch",
+        "overlay": "menu"
+      },
+      {
+        "param": "Slope",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      },
+      {
+        "param": "Slope Env",
+        "widget": "knob",
+        "overlay": "knob",
+        "element": "BlackPlasticKnob_001"
+      }
+    ],
+    "groups": [
+      {
+        "x": 9,
+        "y": 22,
+        "w": 1266,
+        "h": 139,
+        "label": "SPACE"
+      },
+      {
+        "x": 9,
+        "y": 170,
+        "w": 1266,
+        "h": 153,
+        "label": "DISTORTION"
+      },
+      {
+        "x": 9,
+        "y": 331,
+        "w": 946,
+        "h": 133,
+        "label": "RING MODULATOR"
+      },
+      {
+        "x": 9,
+        "y": 475,
+        "w": 946,
+        "h": 137,
+        "label": "FILTER TYPE"
+      }
+    ]
+  }
+}

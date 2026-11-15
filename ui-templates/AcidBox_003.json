@@ -1,0 +1,702 @@
+{
+  "format": 1,
+  "name": "AcidBox_003",
+  "layout": {
+    "pages": [
+      {
+        "name": "BASS",
+        "controls": [
+          {
+            "param": "Osc1 Wave",
+            "widget": "slider",
+            "overlay": "menu"
+          },
+          {
+            "param": "Osc2 Wave",
+            "widget": "slider",
+            "overlay": "menu"
+          },
+          {
+            "param": "Osc2 Interval",
+            "widget": "slider",
+            "overlay": "menu"
+          },
+          {
+            "param": "Drive",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "param": "Tune",
+            "widget": "knob",
+            "label": "Osc Tune",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            },
+            "polarity": "bipolar"
+          },
+          {
+            "param": "Osc Morph",
+            "widget": "knob",
+            "label": "Osc Mix",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left"
+            }
+          },
+          {
+            "param": "Osc2 Detune",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            },
+            "polarity": "bipolar"
+          },
+          {
+            "param": "Env Mod",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "param": "Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "param": "Cutoff",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "param": "Resonance",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "param": "Accent",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001",
+            "labelStyle": {
+              "size": 26,
+              "font": "Titillium Web",
+              "style": "Bold",
+              "align": "left",
+              "dy": -1
+            }
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          }
+        ],
+        "groups": [
+          {
+            "x": 15,
+            "y": 178,
+            "w": 1248,
+            "h": 139
+          },
+          {
+            "x": 15,
+            "y": 331,
+            "w": 1254,
+            "h": 130
+          }
+        ],
+        "qlinkBanks": "rows"
+      },
+      {
+        "name": "FX",
+        "controls": [
+          {
+            "param": "Space",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Echo",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Reverb",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Room Size",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Dist Type",
+            "widget": "slider",
+            "overlay": "menu"
+          },
+          {
+            "param": "Dist Amount",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Dist Tone",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Dist Mix",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Ring Mode",
+            "widget": "slider",
+            "overlay": "menu"
+          },
+          {
+            "param": "Ring Amount",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Ring Pitch",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Filter",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Slope",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Slope Env",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ],
+        "groups": [
+          {
+            "x": 9,
+            "y": 22,
+            "w": 1266,
+            "h": 139,
+            "label": "SPACE"
+          },
+          {
+            "x": 9,
+            "y": 170,
+            "w": 1266,
+            "h": 153,
+            "label": "DISTORTION"
+          },
+          {
+            "x": 9,
+            "y": 331,
+            "w": 946,
+            "h": 133,
+            "label": "RING MODULATOR"
+          },
+          {
+            "x": 9,
+            "y": 475,
+            "w": 946,
+            "h": 137,
+            "label": "FILTER TYPE"
+          }
+        ]
+      },
+      {
+        "name": "KICK/SNARE",
+        "controls": [
+          {
+            "param": "Kick Level",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Snare Level",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Kick Punch",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Kick Tune",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Snare Snap",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Snare Tune",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Kick Click",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Kick Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Snare Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Kick Drive",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Kick Sweep",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Snare Tone",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ],
+        "groups": [
+          {
+            "x": 9,
+            "y": 9,
+            "w": 626,
+            "h": 609,
+            "label": "KICK"
+          },
+          {
+            "x": 649,
+            "y": 9,
+            "w": 626,
+            "h": 609,
+            "label": "SNARE"
+          }
+        ]
+      },
+      {
+        "name": "HATS",
+        "controls": [
+          {
+            "param": "CH Level",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "OH Level",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "CH Tone",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "CH Noise",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "OH Tone",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "OH Noise",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "CH Tune",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "OH Tune",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "CH Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "OH Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ],
+        "groups": [
+          {
+            "x": 17,
+            "y": 12,
+            "w": 618,
+            "h": 606,
+            "label": "CLOSED HAT"
+          },
+          {
+            "x": 649,
+            "y": 12,
+            "w": 618,
+            "h": 606,
+            "label": "OPEN HAT"
+          }
+        ]
+      },
+      {
+        "name": "CLAPS",
+        "controls": [
+          {
+            "param": "Clap Level",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Clap Tone",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Clap Spread",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Clap Decay",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ],
+        "groups": [
+          {
+            "x": 9,
+            "y": 160,
+            "w": 306,
+            "h": 458
+          }
+        ]
+      },
+      {
+        "name": "MIX",
+        "controls": [
+          {
+            "param": "Master",
+            "widget": "fader",
+            "overlay": "knob"
+          },
+          {
+            "param": "Bass Volume",
+            "widget": "fader",
+            "label": "Bass",
+            "overlay": "knob"
+          },
+          {
+            "param": "Drum Level",
+            "widget": "fader",
+            "label": "Drums",
+            "overlay": "knob"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Comp On",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "widget": "empty"
+          },
+          {
+            "param": "Comp Thresh",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Comp Ratio",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Comp Attack",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Duck",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Comp Mix",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Comp Makeup",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Comp Release",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          },
+          {
+            "param": "Duck Time",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ],
+        "groups": [
+          {
+            "x": 9,
+            "y": 175,
+            "w": 953,
+            "h": 446,
+            "label": "Compression"
+          },
+          {
+            "x": 969,
+            "y": 318,
+            "w": 306,
+            "h": 303,
+            "label": "DUCKING"
+          },
+          {
+            "x": 9,
+            "y": 9,
+            "w": 946,
+            "h": 157,
+            "label": "Volume"
+          }
+        ]
+      },
+      {
+        "name": "SEQ",
+        "controls": [
+          {
+            "param": "Bass Pattern",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Drum Pattern",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Song",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Sync to Host",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Run",
+            "widget": "switch",
+            "overlay": "menu"
+          },
+          {
+            "param": "Tempo",
+            "widget": "knob",
+            "overlay": "knob",
+            "element": "BlackPlasticKnob_001"
+          }
+        ]
+      }
+    ],
+    "kit": {
+      "theme": "acidbox-midnight"
+    },
+    "style": {
+      "background": "ff080808"
+    }
+  }
+}
