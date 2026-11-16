@@ -979,6 +979,18 @@ Binds to: one parameter handle (shared by all buttons of a group). Images are
 centred in the entry's bounds at their native size (the firmware does not scale
 them), so size the entry to the image.
 
+**Touches (seen on an MPC One, MPC OS 3.x):** anything drawn over a button, a
+Label or an Image included, takes the touch for its area, and the touch goes to
+the parent component, not to the button underneath. A full-size caption or
+picture on top makes the button dead. Make the button the top layer of its area:
+draw its background, caption and marks first, and give the button pictures that
+are clear (alpha of at least 1, so the whole area still counts) apart from an
+outline or tint. `tools/gen_ui.py`'s sequencer page does this.
+
+**Fixed text on a tab (seen on an MPC One):** a `Text` Label placed directly on a
+tab whose `Data` handle is not bound to anything was not drawn at all. Remap its
+`Data` to a real parameter (any one); the label still shows its own `text`.
+
 ### 6.5 Focus (well-trodden)
 
 A focus ring. Draws a translucent fill and an outline over the parent's area.

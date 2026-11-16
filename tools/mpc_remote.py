@@ -1668,6 +1668,13 @@ def build_parser():
 
 def main(argv=None):
     global S
+    # A Windows console (cp1252) cannot print every character the notes use (such as "->" arrows): replace
+    # those instead of stopping with a UnicodeEncodeError after the work is done.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     argv = list(sys.argv[1:] if argv is None else argv)
     host_arg = None
     if argv and not argv[0].startswith("-") and argv[0] not in COMMANDS:

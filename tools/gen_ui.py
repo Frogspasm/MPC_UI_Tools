@@ -71,7 +71,7 @@ ELEMENT_FOR_WIDGET = {"knob": "knob", "fader": "fader", "switch": "switch", "but
 LABEL_JUSTIFY = {"left": "left", "right": "right", "centre": "horizontallyCentred verticallyCentred"}
 LABEL_MAX = 24   # longest on-screen label a control may have
 PLOTTER_HISTORY_SECONDS = 4.0
-PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups", "qlinks", "qlinkBanks")
+PAGE_KEYS = ("name", "controls", "background", "backgroundTile", "backgroundScale", "art", "groups", "qlinks", "qlinkBanks", "sequencer")
 GROUP_KEYS = ("x", "y", "w", "h", "label")
 GROUP_LABEL_MAX = 40
 GROUP_RADIUS = 12   # corner radius of a group outline, in pixels
@@ -324,8 +324,9 @@ def tui_key(name):
 
 class Page:
     def __init__(self, name, controls, background=None, art=None, background_tile=False, background_scale=100, groups=None,
-                 qlinks=None, qlink_banks="columns"):
+                 qlinks=None, qlink_banks="columns", sequencer=None):
         self.name = name
+        self.sequencer = sequencer      # None, or {role: Param} for a step-sequencer page (see SEQ_ROLES)
         self.qlink_banks = qlink_banks  # "columns" (bank 1 = left column) or "rows" (bank 1 = top row)
         self.controls = controls  # list of Control, at most 16, in reading order
         self.qlinks = qlinks or {}  # Q-Link number (1..16) -> Param, or None for no parameter; others follow the slots
@@ -604,7 +605,20 @@ def load_ui(path, table):
         if qlink_banks not in QLINK_BANKS:
             fail(where, '"qlinkBanks" must be "columns" or "rows", got %s' % json.dumps(qlink_banks),
                  'It says how a model with 4 Q-Links (MPC One, Live) steps through the page: "rows" makes bank 1 the top row.')
-        pages.append(Page(name, controls, background, art, bg_tile, bg_scale, groups, qlinks, qlink_banks))
+        sequencer = None
+        if "sequencer" in pspec:
+            if pspec["sequencer"] != "bass":
+                fail(where, '"sequencer" must be "bass" (the only step-sequencer page there is), got %s' % json.dumps(pspec["sequencer"]))
+            if controls:
+                fail(where, 'a "sequencer" page draws its own controls, so its "controls" must be empty ([]).')
+            sequencer = {role: table.lookup(pname, where + ' "sequencer" (needs the parameter "%s")' % pname)
+                         for role, pname in SEQ_ROLES.items()}
+            if "qlinkBanks" not in pspec:
+                qlink_banks = "rows"
+            if not qlinks:
+                qlinks = {q: sequencer[role] for q, role in SEQ_QLINKS.items()}
+                qlinks.update({q: None for q in range(1, 17) if q not in qlinks})
+        pages.append(Page(name, controls, background, art, bg_tile, bg_scale, groups, qlinks, qlink_banks, sequencer))
 
     uses_kit = any(c.widget in KIT_WIDGETS for pg in pages for c in pg.controls)
     if kit is None and uses_kit:
@@ -1038,7 +1052,209 @@ def plotter_data(style, plot_range):
                ("historyTime", PLOTTER_HISTORY_SECONDS), ("historySkipFrames", 5))
 
 
+# --------------------------------------------------------------------------------------------
+# Step-sequencer page ("sequencer": "bass"), modelled on the AcidBox web version: a row of 16 step cells
+# (note, accent and slide marks, the selected step, the playing step), and an editor for the selected step
+# (a one-octave piano, Low / Mid / High, Accent / Slide / Rest), with the pattern, its length and
+# Randomize / Clear / Shift above. Every control is a Button, Slider, Label or Image bound straight to a plugin
+# parameter, so the plugin does the editing (see plugins/AcidBox/src/AcidBox.cpp).
+# --------------------------------------------------------------------------------------------
+SEQ_ROLES = {"pattern": "Bass Pattern", "length": "Pattern Length", "edit": "Edit Step", "note": "Note", "octave": "Octave",
+             "accent": "Step Accent", "slide": "Step Slide", "rest": "Step Rest", "random": "Randomize",
+             "clear": "Clear", "left": "Shift Left", "right": "Shift Right", "play": "Play Step"}
+for _i in range(1, 17):
+    SEQ_ROLES["step%d" % _i] = "Step %d" % _i
+    SEQ_ROLES["acc%d" % _i] = "Acc %d" % _i
+    SEQ_ROLES["slide%d" % _i] = "Slide %d" % _i
+# Default hardware knobs on a sequencer page (rows banking: bank 1 = Q13..Q16, bank 2 = Q9..Q12).
+SEQ_QLINKS = {13: "edit", 14: "note", 15: "octave", 16: "length", 9: "accent", 10: "slide", 11: "rest", 12: "pattern"}
+
+# Colours from the web version's dark theme (ARGB).
+SEQ_COL = {"cell": "ff1a2347", "beat": "ff212c58", "line": "ff3a4472", "ink": "fff0cf3e", "soft": "ffa9a487",
+           "white": "ff2a3666", "black": "ff0c1128", "dim": "b0080808", "clear": "02000000"}
+SEQ_CELL_W, SEQ_CELL_H, SEQ_CELL_GAP, SEQ_CELL_Y = 72, 120, 7, 100
+SEQ_KEY_X, SEQ_KEY_Y, SEQ_WHITE_W, SEQ_WHITE_H, SEQ_BLACK_W, SEQ_BLACK_H = 16, 272, 92, 165, 56, 101
+SEQ_WHITE = [0, 2, 4, 5, 7, 9, 11]
+SEQ_BLACK = [(1, 0), (3, 1), (6, 3), (8, 4), (10, 5)]   # (note, the white key it sits after)
+SEQ_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+SEQ_BUTTON_DEFS = {}   # definition key -> component wrapping one sequencer button or the length menu; filled while tabs are built
+# Touch rule found on the MPC One: a label or picture drawn over a button takes the touch (and hands it to the page,
+# not to the button), so a button must be the top layer of its area. Here each button is drawn last, with a nearly
+# clear picture (just its outline, or a tint when lit); its background, caption, note and marks sit underneath and
+# show through. The keys keep solid pictures and have their names below the keyboard instead.
+
+
+def write_shape_png(path, w, h, fill, outline=None, stroke=0, radius=8.0, ellipse=False):
+    """A filled rounded rectangle (or ellipse) with an optional outline, as an RGBA PNG. Pure Python."""
+    import zlib
+
+    def rgba(argb):
+        return tuple(int(argb[i:i + 2], 16) for i in (2, 4, 6, 0))   # ARGB -> RGBA
+
+    f, o = rgba(fill), rgba(outline) if outline else None
+
+    def inside(px, py, x0, y0, x1, y1, r):
+        if ellipse:
+            cx, cy, rx, ry = (x0 + x1) / 2.0, (y0 + y1) / 2.0, (x1 - x0) / 2.0, (y1 - y0) / 2.0
+            return rx > 0 and ry > 0 and ((px - cx) / rx) ** 2 + ((py - cy) / ry) ** 2 <= 1.0
+        qx = min(max(px, x0 + r), x1 - r)
+        qy = min(max(py, y0 + r), y1 - r)
+        return (px - qx) ** 2 + (py - qy) ** 2 <= r * r
+
+    rows = []
+    for yy in range(h):
+        row = bytearray([0])
+        py = yy + 0.5
+        for xx in range(w):
+            px = xx + 0.5
+            if not inside(px, py, 0, 0, w, h, radius):
+                row += bytes(rgba(SEQ_COL["clear"]))   # never fully clear: a touch anywhere in the bounds counts
+            elif o and stroke and not inside(px, py, stroke, stroke, w - stroke, h - stroke, max(0.0, radius - stroke)):
+                row += bytes(o)
+            else:
+                row += bytes(f)
+        rows.append(bytes(row))
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+
+    png = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+    png += chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b"")
+    with open(path, "wb") as fh:
+        fh.write(png)
+
+
+def seq_layout():
+    """The page's buttons (tab pixels): (role, (x, y, w, h), button id, group size, caption). 30 % larger than the
+    first version, as asked on the MPC."""
+    buttons = []
+    for k, name in enumerate("ABCD"):
+        buttons.append(("pattern", (16 + k * 81, 32, 73, 57), k, 4, name))
+    buttons.append(("random", (560, 32, 195, 57), 1, 1, "Randomize"))
+    buttons.append(("clear", (767, 32, 130, 57), 1, 1, "Clear"))
+    buttons.append(("left", (909, 32, 83, 57), 1, 1, "<"))
+    buttons.append(("right", (1002, 32, 83, 57), 1, 1, ">"))
+    for k, name in enumerate(("Low", "Mid", "High")):
+        buttons.append(("octave", (676 + k * 140, 300, 130, 68), k, 3, name))
+    for k, role in enumerate(("accent", "slide", "rest")):
+        buttons.append((role, (676 + k * 140, 412, 130, 68), 1, 1, role.capitalize()))
+    return buttons
+
+
+def seq_button_sizes():
+    return sorted({rect[2:] for _r, rect, _b, _n, _c in seq_layout()})
+
+
+def write_sequencer_pngs(out_dir, style):
+    acc, tint = style["accent"], "55" + style["accent"][2:]
+    W = lambda name, *a, **k: write_shape_png(os.path.join(out_dir, name), *a, **k)
+    W("seq_cell_bg.png", SEQ_CELL_W, SEQ_CELL_H, SEQ_COL["cell"], SEQ_COL["line"], 1)
+    W("seq_beat_bg.png", SEQ_CELL_W, SEQ_CELL_H, SEQ_COL["beat"], SEQ_COL["line"], 1)
+    W("seq_cell_off.png", SEQ_CELL_W, SEQ_CELL_H, SEQ_COL["clear"])
+    W("seq_cell_on.png", SEQ_CELL_W, SEQ_CELL_H, "30" + acc[2:], acc, 4)
+    W("seq_rest.png", SEQ_CELL_W, SEQ_CELL_H, SEQ_COL["dim"])
+    W("seq_acc.png", 14, 14, acc, ellipse=True)
+    W("seq_slide.png", 44, 6, SEQ_COL["ink"], radius=3)
+    W("seq_play.png", 12, 12, SEQ_COL["ink"], ellipse=True)
+    W("seq_white_off.png", SEQ_WHITE_W - 4, SEQ_WHITE_H, SEQ_COL["white"], SEQ_COL["line"], 1, radius=6)
+    W("seq_white_on.png", SEQ_WHITE_W - 4, SEQ_WHITE_H, acc, radius=6)
+    W("seq_black_off.png", SEQ_BLACK_W, SEQ_BLACK_H, SEQ_COL["black"], SEQ_COL["line"], 1, radius=5)
+    W("seq_black_on.png", SEQ_BLACK_W, SEQ_BLACK_H, acc, radius=5)
+    for (w, h) in seq_button_sizes():
+        r = h / 2.0
+        W("seq_btn_%dx%d_bg.png" % (w, h), w, h, SEQ_COL["cell"], SEQ_COL["line"], 2, radius=r)
+        W("seq_btn_%dx%d_off.png" % (w, h), w, h, SEQ_COL["clear"], radius=r)
+        W("seq_btn_%dx%d_on.png" % (w, h), w, h, tint, acc, 3, radius=r)
+
+
+def sequencer_component(page, style):
+    sq = page.sequencer
+    centred = "horizontallyCentred verticallyCentred"
+    kids = []
+
+    def wrapped(name, child_type, child_data, rect, prm, actions=(), invalidating=None):
+        """child_type/child_data in a component of its own, bound to prm (see SEQ_BUTTON_DEFS)."""
+        key = "seqb" + hashlib.sha1((dump_json(child_data) + child_type + "%dx%d" % rect[2:] + dump_json(list(actions))).encode("utf-8")).hexdigest()[:10]
+        SEQ_BUTTON_DEFS[key] = component_definition(
+            list(actions), [entry(child_type.lower(), child_type, child_data, "0 0 %d %d" % rect[2:], "No", "Show", "Always")], "00000000")
+        kids.append(entry(name, key, obj(("version", 1), ("handleName", "Data")), "%d %d %d %d" % rect, "No", "Hide", "Always",
+                          remap=[("Data", prm.handle)], invalidating=invalidating))
+
+    def button(name, rect, prm, on, off, bid, n):
+        wrapped(name, "Button", obj(("version", 2), ("onImage", on), ("offImage", off), ("buttonId", bid),
+                                    ("numButtonsInGroup", n), ("handleName", "Data"), ("gestureBehaviour", "Instant")), rect, prm)
+
+    def value(name, rect, prm, colour, size, just="left"):
+        kids.append(entry(name, "Label", label_data("Value", colour, size, just), "%d %d %d %d" % rect, "No", "Hide", "Always",
+                          remap=[("Data", prm.handle)]))
+
+    def text(name, rect, words, colour, size, just="left"):
+        kids.append(entry(name, "Label", label_data("Text", colour, size, just, words), "%d %d %d %d" % rect, "No", "Show", "Always",
+                          remap=[("Data", sq["pattern"].handle)]))   # see TEXT_HANDLE
+
+    def image(name, file, rect, invalidating=None):
+        kids.append(entry(name, "Image", obj(("version", 2), ("imageType", "Regular"), ("colour", "0"), ("image", file)),
+                          "%d %d %d %d" % rect, "No", "Show", "Always", invalidating=invalidating))
+
+    def on_when(prm, idx, steps):
+        return ["IndexedEnabling/%d/%d/%s" % (idx, steps, prm.handle)]
+
+    # ---- bottom layers: backgrounds, captions, values, marks ----
+    text("pattern title", (16, 2, 320, 26), "BASS PATTERN", SEQ_COL["soft"], 18.0)
+    text("length title", (352, 2, 200, 26), "PATTERN LENGTH", SEQ_COL["soft"], 18.0)
+    text("shift title", (909, 2, 176, 26), "SHIFT", SEQ_COL["soft"], 18.0)
+    for role, rect, bid, n, caption in seq_layout():
+        image("%s %s back" % (role, caption), "seq_btn_%dx%d_bg.png" % rect[2:], rect)
+        text("%s %s caption" % (role, caption), rect, caption, style["text"], 26.0, centred)
+    for i in range(16):
+        x = 8 + i * (SEQ_CELL_W + SEQ_CELL_GAP)
+        cell = (x, SEQ_CELL_Y, SEQ_CELL_W, SEQ_CELL_H)
+        image("cell %d back" % (i + 1), "seq_beat_bg.png" if i % 4 == 0 else "seq_cell_bg.png", cell)
+        text("number %d" % (i + 1), (x, SEQ_CELL_Y + 6, SEQ_CELL_W, 22), str(i + 1), SEQ_COL["soft"], 18.0, centred)
+        value("note %d" % (i + 1), (x, SEQ_CELL_Y + 38, SEQ_CELL_W, 40), sq["step%d" % (i + 1)], SEQ_COL["ink"], 30.0, centred)
+        image("accent %d" % (i + 1), "seq_acc.png", (x + SEQ_CELL_W - 20, SEQ_CELL_Y + 8, 14, 14), on_when(sq["acc%d" % (i + 1)], 1, 2))
+        image("slide %d" % (i + 1), "seq_slide.png", (x + 14, SEQ_CELL_Y + SEQ_CELL_H - 20, 44, 6), on_when(sq["slide%d" % (i + 1)], 1, 2))
+        image("playing %d" % (i + 1), "seq_play.png", (x + 8, SEQ_CELL_Y + 9, 12, 12), on_when(sq["play"], i + 1, 17))
+        image("rest %d" % (i + 1), "seq_rest.png", cell, on_when(sq["step%d" % (i + 1)], 0, 37))
+    text("step title", (16, 228, 90, 40), "STEP", SEQ_COL["soft"], 26.0)
+    value("step value", (96, 224, 80, 46), sq["edit"], SEQ_COL["ink"], 34.0)
+    for wi, n in enumerate(SEQ_WHITE):   # key names under the keyboard, clear of the keys
+        text("key %s name" % SEQ_NAMES[n], (SEQ_KEY_X + wi * SEQ_WHITE_W, SEQ_KEY_Y + SEQ_WHITE_H + 4, SEQ_WHITE_W - 4, 32),
+             SEQ_NAMES[n], SEQ_COL["soft"], 22.0, centred)
+    text("octave title", (676, 270, 420, 28), "OCTAVE", SEQ_COL["soft"], 18.0)
+    text("step flags title", (676, 382, 420, 28), "ACCENT / SLIDE / REST", SEQ_COL["soft"], 18.0)
+    text("note title", (676, 494, 420, 28), "NOTE", SEQ_COL["soft"], 18.0)
+    value("note value", (676, 518, 90, 52), sq["note"], SEQ_COL["ink"], 40.0)
+    value("octave value", (770, 522, 140, 46), sq["octave"], SEQ_COL["soft"], 30.0)
+
+    # ---- top layer: everything that takes a touch ----
+    # Pattern length: just the number; a tap opens the list 1..16 (the MPC's menu overlay).
+    wrapped("pattern length", "Label", label_data("Value", SEQ_COL["ink"], 40.0, centred), (352, 32, 120, 57), sq["length"],
+            actions=[action("Mouse Down", "Show Overlay", "Data", "menu overlay"),
+                     action("Enter Pressed", "Show Overlay", "Data", "menu overlay")])
+    for i in range(16):
+        x = 8 + i * (SEQ_CELL_W + SEQ_CELL_GAP)
+        button("cell %d" % (i + 1), (x, SEQ_CELL_Y, SEQ_CELL_W, SEQ_CELL_H), sq["edit"], "seq_cell_on.png", "seq_cell_off.png", i, 16)
+    for wi, n in enumerate(SEQ_WHITE):
+        button("key %s" % SEQ_NAMES[n], (SEQ_KEY_X + wi * SEQ_WHITE_W, SEQ_KEY_Y, SEQ_WHITE_W - 4, SEQ_WHITE_H), sq["note"],
+               "seq_white_on.png", "seq_white_off.png", n, 12)
+    for n, after in SEQ_BLACK:
+        x = SEQ_KEY_X + (after + 1) * SEQ_WHITE_W - 2 - SEQ_BLACK_W // 2
+        button("key %s" % SEQ_NAMES[n], (x, SEQ_KEY_Y, SEQ_BLACK_W, SEQ_BLACK_H), sq["note"], "seq_black_on.png", "seq_black_off.png", n, 12)
+    for role, (x, y, w, h), bid, n, caption in seq_layout():
+        button("%s %s" % (role, caption), (x, y, w, h), sq[role], "seq_btn_%dx%d_on.png" % (w, h), "seq_btn_%dx%d_off.png" % (w, h), bid, n)
+    return component_definition([], kids, style["background"])
+
+
+# A fixed-text label placed straight on a tab still needs its "Data" handle bound to something real: on the MPC
+# One, Text labels left unbound were not drawn at all (labels reading a parameter were). The label shows its own
+# text either way; parameter 0 always exists.
+TEXT_HANDLE = "Parameter 0"
+
+
 def tab_component(page, style):
+    if page.sequencer:
+        return sequencer_component(page, style)
     children = []
     # Paint order is first = bottom: background, then art, then the controls on top.
     if page.background:
@@ -1054,7 +1270,8 @@ def tab_component(page, style):
         children.append(image_entry("group %d" % gi, g["image"], g["x"], g["y"], g["w"], g["h"]))
         if g["label"]:
             children.append(entry("group %d label" % gi, "Label", label_data("Text", style["accent"], 20.0, "left", g["label"]),
-                                  "%d %d %d 26" % (g["x"] + 18, g["y"] + 6, g["w"] - 36), "No", "Show", "Always"))
+                                  "%d %d %d 26" % (g["x"] + 18, g["y"] + 6, g["w"] - 36), "No", "Show", "Always",
+                                  remap=[("Data", TEXT_HANDLE)]))
     # Ticks sit under their control: a ring centred on the knob, or a row of marks under a fader's track.
     for i, ctl in enumerate(page.controls):
         if not ctl.ticks_asset:
@@ -1083,7 +1300,7 @@ def tab_component(page, style):
             height = float(ts["height"]) if ts else 30.0
             just = LABEL_JUSTIFY[ts["justification"]] if ts else "left"
             children.append(entry("text %d" % i, "Label", label_data("Text", colour, height, just, ctl.text),
-                                  bounds, "No", "Show", "Always", invalidating=invalidating))
+                                  bounds, "No", "Show", "Always", remap=[("Data", TEXT_HANDLE)], invalidating=invalidating))
             continue
         if ctl.widget == "plotter":
             children.append(entry(ctl.param.name + " plot", "Plotter", plotter_data(style, ctl.plot_range),
@@ -1102,7 +1319,7 @@ def tab_component(page, style):
                 children.append(entry("%s seg %d" % (ctl.param.name, ci), "Label",
                                       label_data("Text", style["text"], 22.0, "horizontallyCentred verticallyCentred", choice),
                                       "%d %d %d 40" % (SLOT_X[col] + x, SLOT_Y[row] + 54, width),
-                                      "No", "Hide", "Always", invalidating=invalidating))
+                                      "No", "Hide", "Always", remap=[("Data", ctl.param.handle)], invalidating=invalidating))
     return component_definition([], children, style["background"])
 
 
@@ -1202,15 +1419,19 @@ def build_tui(pages, params, style, knob_image, frames, kit_assets):
                 referenced[ctl.param.index] = ctl.param
             if ctl.visible:
                 referenced[ctl.visible[0].index] = ctl.visible[0]
+        for prm in (page.sequencer or {}).values():
+            referenced[prm.index] = prm
     replacements = [obj(("key", p.handle), ("value", list(p.choices)))
                     for _, p in sorted(referenced.items()) if p.is_discrete]
 
     tabs = []
+    SEQ_BUTTON_DEFS.clear()
     for ti, page in enumerate(pages):
         tabs.append(obj(("version", 1), ("tabName", page.name), ("fnKeyIndex", ti), ("fnKeySubIndex", 0),
                         ("componentDefinition", tab_component(page, style)),
-                        ("qlinkBoundsData", list(QLINK_BANKS[page.qlink_banks][1]))))
+                        ("qlinkBoundsData", [] if page.sequencer else list(QLINK_BANKS[page.qlink_banks][1]))))
 
+    defs.extend(sorted(SEQ_BUTTON_DEFS.items()))
     page_data = obj(
         ("version", 1),
         ("componentDefinitions", obj(("version", 2), ("importFiles", []),
@@ -1357,6 +1578,8 @@ def generate(params_path, ui_path, out_dir, assets_dir=None, quiet=False, kit_ca
         for gi, g in enumerate(pg.groups):
             g["image"] = "group-%d-%d.png" % (pi + 1, gi + 1)
             write_group_png(os.path.join(out_dir, g["image"]), g["w"], g["h"], style["accent"])
+    if any(pg.sequencer for pg in pages):
+        write_sequencer_pngs(out_dir, style)
     tui = build_tui(pages, params, style, knob_image, frames, kit_assets)
     qlinks = build_qlinks(pages, params)
     if kit_dir and os.path.abspath(kit_dir) != os.path.abspath(out_dir):

@@ -52,6 +52,7 @@ main{display:grid;grid-template-columns:270px minmax(0,1fr) 300px;gap:12px;paddi
 #qGrid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;margin:8px 0}
 .qcell{border:1px solid var(--line);border-radius:6px;padding:5px 6px;background:#1c1b1f;display:flex;flex-direction:column;gap:3px;min-width:0}
 .qcell.set{border-color:var(--accent)}
+.seqnote{position:absolute;color:var(--muted);font-size:calc(var(--s) * 15px);line-height:1.35;pointer-events:none}
 #qBanksRow{gap:12px;align-items:center;font-size:12px;color:var(--muted)}
 #qBanksRow label{display:flex;gap:4px;align-items:center;color:var(--text,#ddd);cursor:pointer}
 .qcell b{font-size:11px;color:var(--muted);font-weight:600;display:flex;justify-content:space-between;gap:4px}
@@ -243,7 +244,10 @@ function newPage(name) { return { name, slots: Array(MAX_SLOTS).fill(null), back
 // Q-Links: by default each hardware Q-Link drives the control in its slot (qlink(i)). A page's qlinks
 // ({"1": "Cutoff", "5": null}) overrides single knobs: a parameter name, or null for none. Same as gen_ui.py.
 function slotOfQ(q) { for (let i = 0; i < MAX_SLOTS; i++) if (qlink(i) === q) return i; return -1; }
-function autoQ(pg, q) {   // the parameter a Q-Link drives when the page does not say: its slot's, if it has one
+// gen_ui.SEQ_QLINKS: what the hardware knobs drive on a sequencer page unless the page says otherwise.
+const SEQ_QLINKS = { 13: "Edit Step", 14: "Note", 15: "Octave", 16: "Pattern Length", 9: "Step Accent", 10: "Step Slide", 11: "Step Rest", 12: "Bass Pattern" };
+function autoQ(pg, q) {
+  if (pg.sequencer) return Object.keys(pg.qlinks || {}).length ? null : (SEQ_QLINKS[q] || null);   // the parameter a Q-Link drives when the page does not say: its slot's, if it has one
   const sl = pg.slots[slotOfQ(q)];
   return sl && sl.param && sl.widget !== "plotter" ? sl.param : null;
 }
@@ -306,7 +310,7 @@ async function ingest(kind, text, name) {
       status(`Loaded ${params.length} parameters from ${name}`);
     } else {
       doc = parseUi(text); cur = 0; sel = null;
-      fileNames.ui = name;
+      fileNames.ui = name; savedNorm = JSON.stringify(exportUi());
       status(loadNotes.length ? `Opened ${name} with ${loadNotes.length} note(s); see Checks.` : `Opened ${name}`);
     }
   } catch (err) { status(`${name}: ${err.message}`, true); return false; }
@@ -472,7 +476,9 @@ function pageFromJson(pg, pi) {
       if (Number.isInteger(q) && q >= 1 && q <= 16 && (v === null || typeof v === "string")) page.qlinks[q] = v;
       else loadNotes.push(`Page ${pi + 1}: Q-Link setting "${k}" was not understood and was dropped.`);
     });
-    page.qlinkBanks = pg && pg.qlinkBanks === "rows" ? "rows" : "columns";
+    page.sequencer = pg && typeof pg.sequencer === "string" ? pg.sequencer : null;
+    // A sequencer page banks its Q-Links by rows unless it says otherwise (as gen_ui.py does).
+    page.qlinkBanks = pg && pg.qlinkBanks === "rows" ? "rows" : pg && pg.qlinkBanks === "columns" ? "columns" : page.sequencer ? "rows" : "columns";
     if (pg && pg.qlinkBanks !== undefined && pg.qlinkBanks !== "rows" && pg.qlinkBanks !== "columns") loadNotes.push(`Page ${pi + 1}: "qlinkBanks" ${JSON.stringify(pg.qlinkBanks)} was not understood; using columns.`);
     const ctls = pg && Array.isArray(pg.controls) ? pg.controls : [];
     if (ctls.length > MAX_SLOTS) loadNotes.push(`Page ${pi + 1} had ${ctls.length} controls; only the first ${MAX_SLOTS} were kept.`);
@@ -520,6 +526,7 @@ function pageToJson(pg) {
     const controls = [];
     for (let i = 0; i <= last; i++) controls.push(toJson(pg.slots[i]));   // gaps become "empty"
     const o = { name: pg.name, controls };
+    if (pg.sequencer) o.sequencer = pg.sequencer;
     if (pg.background) {
       o.background = pg.background;
       if (pg.bgTile) { o.backgroundTile = true; o.backgroundScale = pg.bgScale; }
@@ -527,7 +534,8 @@ function pageToJson(pg) {
     if (pg.groups.length) o.groups = pg.groups.map(g => ({ x: g.x, y: g.y, w: g.w, h: g.h, ...(g.label ? { label: g.label } : {}) }));
     const qk = Object.keys(pg.qlinks || {}).map(Number).sort((a, b) => a - b);
     if (qk.length) { o.qlinks = {}; qk.forEach(q => { o.qlinks[String(q)] = pg.qlinks[q]; }); }
-    if (pg.qlinkBanks === "rows") o.qlinkBanks = "rows";
+    if (pg.qlinkBanks === "rows" && !pg.sequencer) o.qlinkBanks = "rows";
+    if (pg.sequencer && pg.qlinkBanks === "columns") o.qlinkBanks = "columns";
     if (pg.art.length) o.art = pg.art.map(a => a.tile
       ? { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h, tile: true, scale: a.scale }
       : { image: a.image, x: a.x, y: a.y, w: a.w, h: a.h });
@@ -543,6 +551,7 @@ async function saveUi() {
       const r = await fetch("/api/file?path=" + encodeURIComponent(`plugins/${servedPlugin}/ui.json`), { method: "PUT", headers: { "Content-Type": "application/json" }, body: text });
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "HTTP " + r.status);
       fileNames.ui = `plugins/${servedPlugin}/ui.json`;
+      rememberBase(servedPlugin, text);
       status(`Saved plugins/${servedPlugin}/ui.json. Build the plugin to put it on the MPC.`);
       renderAll();
     } catch (e) { status("Save failed: " + e.message, true); }
@@ -559,6 +568,7 @@ async function saveUi() {
       await w.close();
       fileNames.ui = remembered.name;
       await rememberLocation("save", remembered);
+      savedNorm = JSON.stringify(exportUi());
       status("Saved " + remembered.name);
       renderAll();
       return;
@@ -574,6 +584,7 @@ async function saveUi() {
       await rememberLocation("save", h);
       await idbPut("ui", h);
       fileNames.ui = h.name;
+      savedNorm = JSON.stringify(exportUi());
       status("Saved " + h.name);
       renderAll();
       return;
@@ -620,6 +631,12 @@ function allProblems() {
   if (doc.pages.length > MAX_PAGES) list.push({ err: true, msg: `${doc.pages.length} pages; the MPC supports at most ${MAX_PAGES}` });
   doc.pages.forEach((pg, pi) => {
     const where = `Page ${pi + 1} "${pg.name}"`;
+    if (pg.sequencer && pg.slots.some(Boolean)) list.push({ err: true, msg: `${where} is a sequencer page; it cannot also have controls (clear its slots)` });
+    if (pg.sequencer && params.length) {
+      const need = ["Bass Pattern", "Pattern Length", "Edit Step", "Note", "Octave", "Step Accent", "Step Slide", "Step Rest", "Randomize", "Clear", "Shift Left", "Shift Right", "Play Step", "Step 1", "Acc 1", "Slide 1"];
+      const lack = need.filter(n => !byName[n]);
+      if (lack.length) list.push({ err: true, msg: `${where} is a sequencer page, but the plugin has no ${lack.slice(0, 4).map(n => `"${n}"`).join(", ")}${lack.length > 4 ? "…" : ""}` });
+    }
     if (!pg.name.trim()) list.push({ err: true, msg: `${where}: name is empty` });
     else if (pg.name.length > MAX_NAME) list.push({ warn: true, msg: `${where}: names longer than 8 characters may be cut off on the tab` });
     pg.slots.forEach((s, i) => {
@@ -693,6 +710,7 @@ function dropOnPage(t) {
   const pl = dragPayload; dragPayload = null;
   if (!pl || t < 0 || t >= doc.pages.length) return;
   const target = doc.pages[t];
+  if (target.sequencer) { status(`Page "${target.name}" is a sequencer page: the generator draws all of its controls.`, true); return; }
   if (pl.froms) {
     // A selection moves as a block: every control needs its own blank slot on the target page, or none moves.
     if (pl.page === t) return;
@@ -744,6 +762,7 @@ function moveBlock(froms, to) {
 }
 function placeFirstBlank(item) {
   const pg = doc.pages[cur], i = pg.slots.indexOf(null);
+  if (pg.sequencer) { status("This is a sequencer page: the generator draws all of its controls.", true); return; }
   if (i < 0) { status("No blank slot on this page. Clear one first.", true); return; }
   pg.slots[i] = makeFromItem(item); sel = i; renderAll();
 }
@@ -952,10 +971,19 @@ function paintSelection() {
   renderInspector();
 }
 
+// The layout as last opened or saved here (its ui.json form). Compared with the screen to say saved / unsaved.
+let savedNorm = null;
+function fileStatus() {
+  const pm = `params: ${esc(fileNames.params || "none")} · ui: ${esc(fileNames.ui || "none")}`;
+  if (!fileNames.ui || savedNorm === null) return pm;
+  if (JSON.stringify(exportUi()) === savedNorm)
+    return `${pm} · <b>saved</b> (the MPC shows the skin from the last build and install)`;
+  return `${pm} · <span style="color:var(--accent)"><b>UNSAVED changes</b></span>: the file on disk, and so the MPC, does not have them yet. Save ui.json, then build and install.`;
+}
 function renderAll() {
   trackHistory(); updateHistButtons();
   syncSelection();
-  $("files").textContent = `params: ${fileNames.params || "none"} · ui: ${fileNames.ui || "none"}`;
+  $("files").innerHTML = fileStatus();
   renderPages(); renderPalette(); renderStage(); renderInspector(); renderWarnings(); renderKit(); renderArtwork(); renderQlinks(); saveDraft();
 }
 
@@ -1791,6 +1819,56 @@ function qBadge(i) {
   if (!qs.length) return `<span class="q none" title="No Q-Link drives this control on this page (see Q-Links below the screen)">no Q</span>`;
   return `<span class="q moved" title="Driven by Q-Link ${qs.join(", ")} (set in Q-Links below the screen)">Q${qs.join(" Q")}</span>`;
 }
+// A sequencer page ("sequencer": "bass") is drawn by gen_ui.py (sequencer_component); this is a preview of it at the
+// parameters' default values, with the same positions and colours. It cannot be edited here.
+function drawSequencer(cv, pg) {
+  const C = { cell: "#1a2347", beat: "#212c58", line: "#3a4472", ink: "#f0cf3e", soft: "#a9a487", white: "#2a3666", black: "#0c1128" };
+  const acc = "#" + (doc.kit && doc.kit.accent ? doc.kit.accent : (THEME_ACCENT[(doc.kit && doc.kit.theme) || "mpc-red"] || "ffd31145")).slice(2, 8);
+  const val = name => { const p = byName[name]; if (!p) return null; const ch = p.choices; return ch && ch.length ? ch[Math.round((Number(p.default) || 0) * (ch.length - 1))] : p.display; };
+  const on = name => { const p = byName[name]; return p ? Number(p.default) >= 0.5 : false; };
+  const box = (x, y, w, h, css, text, tcss) => {
+    const d = el("div"); pos(d, x, y, w, h, TW, TH);
+    d.style.cssText += ";position:absolute;box-sizing:border-box;display:flex;align-items:center;justify-content:center;pointer-events:none;" + (css || "");
+    if (text !== undefined) { const t = el("span"); t.textContent = text; t.style.cssText = "font-size:calc(var(--s) * " + ((tcss && tcss.size) || 14) + "px);color:" + ((tcss && tcss.colour) || "#fff") + ";white-space:nowrap"; d.appendChild(t); }
+    cv.appendChild(d); return d;
+  };
+  const pill = (x, y, w, h, lit, text) => box(x, y, w, h, `border-radius:calc(var(--s) * ${h / 2}px);background:${lit ? acc : C.cell};border:${lit ? 0 : "calc(var(--s) * 2px) solid " + C.line}`, text, { size: 17 });
+  const lbl = (x, y, w, h, text, colour, size, left) => { const d = box(x, y, w, h, left ? "justify-content:flex-start" : "", text, { colour, size }); return d; };
+  // Positions and sizes as gen_ui.py seq_layout() / sequencer_component() (captions are 26 px there, 17 here).
+  const pat = byName["Bass Pattern"] ? Math.round((Number(byName["Bass Pattern"].default) || 0) * 3) : 0;
+  lbl(16, 2, 320, 26, "BASS PATTERN", C.soft, 12, true);
+  "ABCD".split("").forEach((n, k) => pill(16 + k * 81, 32, 73, 57, k === pat, n));
+  lbl(352, 2, 200, 26, "PATTERN LENGTH", C.soft, 12, true);
+  lbl(352, 32, 120, 57, val("Pattern Length") || "16", C.ink, 26);
+  pill(560, 32, 195, 57, false, "Randomize"); pill(767, 32, 130, 57, false, "Clear");
+  lbl(909, 2, 176, 26, "SHIFT", C.soft, 12, true); pill(909, 32, 83, 57, false, "<"); pill(1002, 32, 83, 57, false, ">");
+  const editStep = byName["Edit Step"] ? Math.round((Number(byName["Edit Step"].default) || 0) * 15) : 0;
+  for (let i = 0; i < 16; i++) {
+    const x = 8 + i * 79, note = val(`Step ${i + 1}`), rest = note === "Rest";
+    box(x, 100, 72, 120, `border-radius:calc(var(--s) * 8px);background:${i % 4 === 0 || i === editStep ? C.beat : C.cell};border:${i === editStep ? `calc(var(--s) * 4px) solid ${acc}` : `1px solid ${C.line}`};opacity:${rest ? 0.45 : 1}`);
+    lbl(x, 106, 72, 22, String(i + 1), C.soft, 12);
+    lbl(x, 138, 72, 40, note === null ? "?" : note, C.ink, 20);
+    if (on(`Acc ${i + 1}`)) box(x + 52, 108, 14, 14, `border-radius:50%;background:${acc}`);
+    if (on(`Slide ${i + 1}`)) box(x + 14, 200, 44, 6, `border-radius:3px;background:${C.ink}`);
+  }
+  lbl(16, 228, 90, 40, "STEP", C.soft, 17, true); lbl(96, 224, 80, 46, String(editStep + 1), C.ink, 22, true);
+  const note = byName["Note"] ? Math.round((Number(byName["Note"].default) || 0) * 11) : 0, names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+  [0, 2, 4, 5, 7, 9, 11].forEach((n, wi) => {
+    box(16 + wi * 92, 272, 88, 165, `border-radius:calc(var(--s) * 6px);background:${n === note ? acc : C.white};border:1px solid ${C.line}`);
+    lbl(16 + wi * 92, 441, 88, 32, names[n], C.soft, 15);
+  });
+  [[1, 0], [3, 1], [6, 3], [8, 4], [10, 5]].forEach(([n, after]) => box(16 + (after + 1) * 92 - 2 - 28, 272, 56, 101, `border-radius:calc(var(--s) * 5px);background:${n === note ? acc : C.black};border:1px solid ${C.line}`));
+  const oct = byName["Octave"] ? Math.round((Number(byName["Octave"].default) || 0) * 2) : 1;
+  const big = (x, y, w, h, lit, text) => box(x, y, w, h, `border-radius:calc(var(--s) * ${h / 2}px);background:${lit ? acc : C.cell};border:${lit ? 0 : "calc(var(--s) * 2px) solid " + C.line}`, text, { size: 17 });
+  lbl(676, 270, 420, 28, "OCTAVE", C.soft, 12, true);
+  ["Low", "Mid", "High"].forEach((n, k) => big(676 + k * 140, 300, 130, 68, k === oct, n));
+  lbl(676, 382, 420, 28, "ACCENT / SLIDE / REST", C.soft, 12, true);
+  [["Accent", "Step Accent"], ["Slide", "Step Slide"], ["Rest", "Step Rest"]].forEach(([n, pn], k) => big(676 + k * 140, 412, 130, 68, on(pn), n));
+  lbl(676, 494, 420, 28, "NOTE", C.soft, 12, true); lbl(676, 518, 90, 52, names[note], C.ink, 26, true); lbl(770, 522, 140, 46, ["Low", "Mid", "High"][oct], C.soft, 20, true);
+  const n2 = el("div", "seqnote");
+  n2.textContent = "Sequencer page: drawn by the generator, shown here at the plugin's default values. Tap a step on the MPC to select it, then set its note, octave, accent, slide and rest. It has no slots to edit.";
+  pos(n2, 16, 560, 640, 60, TW, TH); cv.appendChild(n2);
+}
 function renderStage() {
   const pg = doc.pages[cur];
   $("stageTitle").textContent = `Screen: page ${cur + 1} "${pg.name}"`;
@@ -1816,6 +1894,7 @@ function renderStage() {
   }
   st.style.background = "#" + screenBg().slice(2, 8);   // the screen colour, as the tab will show it
   const cv = $("canvas"); cv.innerHTML = "";
+  if (pg.sequencer) { drawSequencer(cv, pg); return; }
   // Pictures first (bottom), then the Q-Link banks and slots on top.
   const pics = (pg.background ? [{ image: pg.background, x: 0, y: 0, w: TW, h: TH, bg: true }] : []).concat(pg.art);
   pics.forEach(a => {
@@ -2494,7 +2573,7 @@ async function openPlugin(name, withUi) {
   try { localStorage.setItem(PLUGIN_KEY, name); } catch (e) { /* not remembered */ }
   if (withUi) {
     const uj = await get(`plugins/${name}/ui.json`);
-    if (uj !== null) await ingest("ui", uj, `plugins/${name}/ui.json`);
+    if (uj !== null) { await ingest("ui", uj, `plugins/${name}/ui.json`); rememberBase(name, uj); }
     else { doc = { pages: [newPage("1")], kit: null, extra: {} }; cur = 0; sel = null; fileNames.ui = ""; status(`Loaded ${params.length} parameters from ${name}. It has no ui.json yet: Save ui.json creates it.`); renderAll(); }
   }
   renderPlugSel();
@@ -2511,6 +2590,43 @@ $("plugSel").addEventListener("change", async e => {
   if (hasWork && name !== servedPlugin && !confirm(`Open ${name}? The layout on the screen is replaced (Undo brings it back).`)) { renderPlugSel(); return; }
   await openPlugin(name, true);
 });
+// The plugin's ui.json as last opened or saved here ("base"), to notice when something else changed it on disk
+// (a build step, Claude, another editor). Kept per plugin in this browser.
+const BASE_KEY = "mpc-ui-editor-base:";
+let declinedDisk = null, diskChecking = false;
+// Coming back to this tab: check the plugin's ui.json again.
+async function followDiskSoon() {
+  if (!servedPlugin || diskChecking || document.hidden) return;
+  diskChecking = true;
+  try { await followDisk(servedPlugin); } catch (e) { /* server gone: nothing to do */ } finally { diskChecking = false; }
+}
+window.addEventListener("focus", followDiskSoon);
+document.addEventListener("visibilitychange", followDiskSoon);
+function rememberBase(name, text) {
+  savedNorm = JSON.stringify(exportUi());
+  try { localStorage.setItem(BASE_KEY + name, JSON.stringify({ text, norm: JSON.stringify(exportUi()) })); } catch (e) { /* not remembered */ }
+}
+// When ui.json on disk is not the one this draft started from: load it, or ask first if the draft has edits of its own.
+// Returns true when it said something in the status line.
+async function followDisk(name) {
+  let base = null; try { base = JSON.parse(localStorage.getItem(BASE_KEY + name) || "null"); } catch (e) { base = null; }
+  const r = await fetch("/" + ["plugins", name, "ui.json"].map(encodeURIComponent).join("/"), { cache: "no-store" });
+  if (!r.ok) return false;
+  const disk = await r.text();
+  if (base && disk === base.text) return false;                       // unchanged on disk
+  if (disk === declinedDisk) return false;                            // already asked about this version
+  const edited = !base || JSON.stringify(exportUi()) !== base.norm;   // no base: cannot tell, so ask
+  if (edited && !confirm(`plugins/${name}/ui.json has changed on disk since this layout was opened here.\n\n` +
+      `OK: open the version on disk (your unsaved edits here are replaced; Undo brings them back).\nCancel: keep editing this layout (Save ui.json would overwrite the file).`)) {
+    declinedDisk = disk;
+    status(`plugins/${name}/ui.json changed on disk; you kept the layout from this browser. Saving overwrites the file.`, true);
+    return true;
+  }
+  await ingest("ui", disk, `plugins/${name}/ui.json`);
+  rememberBase(name, disk);
+  status(`plugins/${name}/ui.json changed on disk; opened the new version.`);
+  return true;
+}
 async function startPlugins() {
   if (!(await UISERVER.available())) return;
   pluginNames = await listPlugins();
@@ -2520,7 +2636,7 @@ async function startPlugins() {
     // A draft of this plugin's layout is kept as it is; only the parameters are read again.
     const drafted = (fileNames.ui || "").startsWith(`plugins/${last}/`) && doc.pages.some(pg => pg.slots.some(Boolean));
     await openPlugin(last, !drafted);
-    if (drafted) status(`${last}: parameters re-read from the repo; your layout is as you left it (Save ui.json writes plugins/${last}/ui.json).`);
+    if (drafted && !(await followDisk(last))) status(`${last}: parameters re-read from the repo; your layout is as you left it (Save ui.json writes plugins/${last}/ui.json).`);
   } else if (pluginNames.length === 1 && !params.length) await openPlugin(pluginNames[0], true);
   else { renderPlugSel(); if (!params.length) status("Choose your plugin from the Plugin menu to begin."); }
 }

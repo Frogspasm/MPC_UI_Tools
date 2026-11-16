@@ -197,6 +197,12 @@ Undo brings back whatever a template replaced. Templates also keep the value eve
 
 `min` and `max` give the range of the value being drawn. The plugin fills it with `setDisplayNormalised()`. A plotter takes a slot and has no Q-Link. Not yet tested on hardware: it is not confirmed whether the plotter reads the plain value (here 0..100) or the normalised 0..1 value. If a trace looks flat on the MPC, try `"min": 0, "max": 1`.
 
+## Step-sequencer page
+
+`{"name": "SEQ2", "controls": [], "sequencer": "bass"}` makes a page the generator draws by itself, modelled on the AcidBox web version's bass sequencer: pattern buttons A to D, the pattern length (tap the number for a list), Randomize / Clear / Shift, a row of 16 step cells (note, accent dot, slide bar, dimmed rests, a light on the playing step; tap one to select it), and an editor for the selected step (a one-octave keyboard, Low / Mid / High, Accent / Slide / Rest). Its `controls` must stay empty.
+
+The page binds to parameters by name, so the plugin must have all of them: `Bass Pattern` (4 choices), `Pattern Length` (16 choices), `Edit Step` (16), `Note` (12), `Octave` (3), the bools `Step Accent`, `Step Slide`, `Step Rest`, `Randomize`, `Clear`, `Shift Left`, `Shift Right`, `Step 1`..`Step 16` (37 choices: Rest, then C0..B2), `Acc 1`..`Acc 16`, `Slide 1`..`Slide 16`, and the display-only `Play Step` (0..16, 0 = stopped). The plugin does the editing: `plugins/AcidBox/src/AcidBox.cpp` is the reference. Its Q-Links default to Q13 Edit Step, Q14 Note, Q15 Octave, Q16 Pattern Length, Q9 Step Accent, Q10 Step Slide, Q11 Step Rest, Q12 Bass Pattern, banked by rows; a `qlinks` object replaces that. The layout editor shows a preview of the page and keeps it as it is.
+
 ## Regenerating
 
 `build.py` regenerates the skins on every full build unless `plugins/MyPlugin/skins/` exists. For a quick check without cross-compiling, run the generator directly:
